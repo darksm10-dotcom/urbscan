@@ -1,65 +1,81 @@
-import Image from "next/image";
+"use client";
+
+import { useState, useRef, useCallback } from "react";
+import SearchPanel from "@/components/SearchPanel";
+import ResultsList from "@/components/ResultsList";
+import { Building, SearchParams } from "@/types";
+import { searchNearbyBuildings } from "@/lib/places";
+import { pushHistory } from "@/lib/history";
 
 export default function Home() {
+  const [buildings, setBuildings] = useState<Building[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [searched, setSearched] = useState(false);
+  const [lastParams, setLastParams] = useState<SearchParams | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const handleSearch = useCallback(async (params: SearchParams) => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    setLoading(true);
+    setError(null);
+    setSearched(true);
+    setSelectedId(null);
+    setLastParams(params);
+
+    try {
+      const results = await searchNearbyBuildings(params, controller.signal);
+      setBuildings(results);
+      params.locations.forEach((loc) => pushHistory({ address: loc.address, lat: loc.lat, lng: loc.lng }));
+    } catch (err) {
+      if ((err as Error).name === "AbortError") return;
+      setError(err instanceof Error ? err.message : "查询失败，请重试");
+      setBuildings([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+      <header style={{ borderBottom: "1px solid var(--border)", padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "linear-gradient(180deg, rgba(212,160,60,0.04) 0%, transparent 100%)", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: "12px" }}>
+          <span style={{ fontFamily: "'Syne', sans-serif", fontSize: "26px", fontWeight: 800, letterSpacing: "0.1em", color: "var(--amber)", textTransform: "uppercase" }}>URBSCAN</span>
+          <span style={{ fontSize: "12px", color: "var(--text-dim)", letterSpacing: "0.15em", textTransform: "uppercase" }}>B2B 线索引擎 v2.0</span>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+          <span style={{ fontSize: "12px", color: "var(--text-dim)", letterSpacing: "0.1em" }}>REGION: MY</span>
+          <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "var(--green-bright)", boxShadow: "0 0 6px var(--green-bright)", animation: "scanPulse 2s ease-in-out infinite", display: "inline-block" }} />
+          <span style={{ fontSize: "12px", color: "var(--green-bright)", letterSpacing: "0.1em" }}>ONLINE</span>
         </div>
+      </header>
+
+      <div style={{ height: "1px", background: "linear-gradient(90deg, transparent, var(--amber-dim), transparent)", opacity: 0.3, flexShrink: 0 }} />
+
+      <main style={{ flex: 1, display: "flex", minHeight: 0 }}>
+        <aside style={{ width: "340px", flexShrink: 0, borderRight: "1px solid var(--border)", padding: "20px", background: "var(--bg-card)", overflowY: "auto" }} className="sidebar">
+          <SearchPanel onSearch={handleSearch} loading={loading} />
+        </aside>
+        <section style={{ flex: 1, padding: "20px 24px", overflowY: "auto", minWidth: 0 }}>
+          <ResultsList buildings={buildings} loading={loading} error={error} searched={searched} lastParams={lastParams} selectedId={selectedId} onSelectId={setSelectedId} />
+        </section>
       </main>
+
+      <footer style={{ borderTop: "1px solid var(--border)", padding: "8px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+        <span style={{ fontSize: "11px", color: "var(--text-dim)", letterSpacing: "0.12em" }}>POWERED BY GOOGLE PLACES API (NEW)</span>
+        <span style={{ fontSize: "11px", color: "var(--text-dim)", letterSpacing: "0.12em" }}>© 2026 URBSCAN INTELLIGENCE</span>
+      </footer>
+
+      <style>{`
+        @media (max-width: 768px) {
+          main { flex-direction: column !important; }
+          .sidebar { width: 100% !important; border-right: none !important; border-bottom: 1px solid var(--border); }
+        }
+      `}</style>
     </div>
   );
 }
