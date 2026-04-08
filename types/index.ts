@@ -1,5 +1,35 @@
 export type BuildingType = "office" | "residential" | "all";
 export type RangeMode = "radius" | "custom";
+export type LeadStatus = "new" | "contacted" | "following" | "won" | "lost";
+
+export interface PipelineEntry {
+  status: LeadStatus;
+  note: string;
+  updatedAt: string;
+}
+
+export interface ContactLog {
+  id: string;
+  buildingId: string;
+  buildingName: string;
+  buildingAddress?: string;
+  buildingPhone?: string;
+  method: "whatsapp" | "call" | "email" | "visit" | "other";
+  note: string;
+  contactedAt: string;   // ISO datetime
+  followUpAt?: string;   // ISO date (YYYY-MM-DD)
+  followUpDone: boolean;
+}
+
+export interface CompanyEnrichment {
+  employees?: string;
+  industry?: string;
+  linkedinUrl?: string;
+  description?: string;
+  annualRevenue?: string;
+  foundedYear?: number;
+  source: "apollo";
+}
 
 export type Industry =
   | "all"
