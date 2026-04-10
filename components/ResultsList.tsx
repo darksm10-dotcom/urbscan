@@ -712,6 +712,8 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
                 </div>
                 <div style={{ minWidth: 0, alignSelf: "center" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "2px" }}>
+                    {b.type === "office" && <span title="写字楼" style={{ fontSize: "14px", flexShrink: 0 }}>🏢</span>}
+                    {b.type === "residential" && <span title="住宅" style={{ fontSize: "14px", flexShrink: 0 }}>🏠</span>}
                     <span style={{ fontSize: "13px", color: "var(--text-primary)", fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>{b.name}</span>
                   </div>
                   <div style={{ fontSize: "13px", color: "var(--text-dim)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{b.address}</div>

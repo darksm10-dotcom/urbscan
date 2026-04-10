@@ -1,8 +1,6 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
-import SearchPanel from "@/components/SearchPanel";
-import ResultsList from "@/components/ResultsList";
 import ThemeSwitcher, { useTheme } from "@/components/ThemeSwitcher";
 import dynamic from "next/dynamic";
 import { Building, SearchParams } from "@/types";
@@ -10,6 +8,8 @@ import { searchNearbyBuildings } from "@/lib/places";
 import { pushHistory } from "@/lib/history";
 import { getOverdueFollowUps, onContactsChanged } from "@/lib/contacts";
 
+const SearchPanel   = dynamic(() => import("@/components/SearchPanel"),   { ssr: false });
+const ResultsList   = dynamic(() => import("@/components/ResultsList"),   { ssr: false });
 const ContactsPanel = dynamic(() => import("@/components/ContactsPanel"), { ssr: false });
 
 type AppTab = "scan" | "contacts";
