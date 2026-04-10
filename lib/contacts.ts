@@ -1,6 +1,18 @@
 import { ContactLog } from "@/types";
 
 const KEY = "urbscan_contacts";
+const EVENT = "urbscan:contacts:changed";
+
+function notify(): void {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(EVENT));
+  }
+}
+
+export function onContactsChanged(handler: () => void): () => void {
+  window.addEventListener(EVENT, handler);
+  return () => window.removeEventListener(EVENT, handler);
+}
 
 function load(): ContactLog[] {
   if (typeof window === "undefined") return [];
@@ -28,15 +40,18 @@ export function getContactsForBuilding(buildingId: string): ContactLog[] {
 export function addContact(log: Omit<ContactLog, "id">): ContactLog {
   const entry: ContactLog = { ...log, id: crypto.randomUUID() };
   save([entry, ...load()]);
+  notify();
   return entry;
 }
 
 export function updateContact(id: string, updates: Partial<ContactLog>): void {
   save(load().map((c) => (c.id === id ? { ...c, ...updates } : c)));
+  notify();
 }
 
 export function deleteContact(id: string): void {
   save(load().filter((c) => c.id !== id));
+  notify();
 }
 
 export function getOverdueFollowUps(): ContactLog[] {

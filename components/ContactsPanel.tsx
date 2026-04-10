@@ -1,18 +1,33 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { ContactLog } from "@/types";
-import { getContacts, updateContact, deleteContact, getOverdueFollowUps, googleCalendarLink } from "@/lib/contacts";
+import {
+  getContacts,
+  updateContact,
+  deleteContact,
+  getOverdueFollowUps,
+  googleCalendarLink,
+  onContactsChanged,
+} from "@/lib/contacts";
 
 const METHOD_META: Record<ContactLog["method"], { icon: string; label: string; color: string }> = {
   whatsapp: { icon: "💬", label: "WhatsApp", color: "#25d366" },
   call:     { icon: "📞", label: "Call",      color: "var(--amber)" },
-  email:    { icon: "✉",  label: "Email",     color: "#6090c0" },
+  email:    { icon: "✉",  label: "Email",     color: "var(--cyan)" },
   visit:    { icon: "🏢", label: "Visit",     color: "var(--green-bright)" },
   other:    { icon: "◈",  label: "Other",     color: "var(--text-secondary)" },
 };
 
-type FilterMode = "all" | "overdue" | "upcoming" | "done";
+type FilterMode = "all" | "followup" | "overdue" | "done";
+type SortCol = "name" | "date" | "followup" | "method";
+
+interface EditForm {
+  method: ContactLog["method"];
+  note: string;
+  followUpAt: string;
+  followUpDone: boolean;
+}
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric" });
@@ -25,36 +40,68 @@ function formatDateTime(iso: string): string {
 function daysUntil(dateStr: string): number {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const target = new Date(dateStr);
-  return Math.round((target.getTime() - today.getTime()) / 86400000);
+  return Math.round((new Date(dateStr).getTime() - today.getTime()) / 86400000);
 }
 
 function FollowUpBadge({ dateStr, done }: { dateStr: string; done: boolean }) {
-  if (done) return <span style={{ fontSize: "10px", color: "var(--green-bright)", border: "1px solid rgba(90,138,74,0.3)", borderRadius: "2px", padding: "1px 6px" }}>✓ Done</span>;
+  if (done) return (
+    <span style={{ fontSize: "12px", color: "var(--green-bright)", background: "rgba(90,138,74,0.12)", borderRadius: "4px", padding: "2px 8px", whiteSpace: "nowrap" }}>
+      ✓ Done
+    </span>
+  );
   const days = daysUntil(dateStr);
-  const color = days < 0 ? "#c07070" : days === 0 ? "var(--amber)" : "var(--text-secondary)";
-  const label = days < 0 ? `${Math.abs(days)}d overdue` : days === 0 ? "Due today" : `in ${days}d`;
-  return <span style={{ fontSize: "10px", color, border: `1px solid ${color}40`, borderRadius: "2px", padding: "1px 6px", letterSpacing: "0.04em" }}>🔔 {label}</span>;
+  const isOverdue = days < 0;
+  const isToday = days === 0;
+  const color = isOverdue ? "#e05555" : isToday ? "var(--amber)" : "var(--text-secondary)";
+  const bg = isOverdue ? "rgba(224,85,85,0.1)" : isToday ? "var(--amber-glow)" : "rgba(0,0,0,0.04)";
+  const label = isOverdue ? `${Math.abs(days)}d overdue` : isToday ? "Today" : `in ${days}d`;
+  return (
+    <span style={{ fontSize: "12px", color, background: bg, borderRadius: "4px", padding: "2px 8px", whiteSpace: "nowrap" }}>
+      🔔 {label}
+    </span>
+  );
 }
+
+function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <div style={{ flex: 1, padding: "14px 18px", background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "8px", minWidth: 0 }}>
+      <div style={{ fontSize: "22px", fontWeight: 700, color, marginBottom: "2px" }}>{value}</div>
+      <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{label}</div>
+    </div>
+  );
+}
+
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  background: "var(--bg-card)",
+  border: "1px solid var(--border)",
+  borderRadius: "6px",
+  padding: "7px 10px",
+  color: "var(--text-primary)",
+  fontSize: "13px",
+  outline: "none",
+  fontFamily: "var(--font-ui)",
+};
 
 export default function ContactsPanel() {
   const [contacts, setContacts] = useState<ContactLog[]>([]);
   const [filter, setFilter] = useState<FilterMode>("all");
-  const [notifStatus, setNotifStatus] = useState<NotificationPermission | "unsupported">("default");
+  const [search, setSearch] = useState("");
+  const [sortCol, setSortCol] = useState<SortCol>("date");
+  const [sortAsc, setSortAsc] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<EditForm | null>(null);
+  const [notifStatus, setNotifStatus] = useState<NotificationPermission | "unsupported">("default");
 
   const reload = useCallback(() => setContacts(getContacts()), []);
 
   useEffect(() => {
     reload();
-    if (!("Notification" in window)) {
-      setNotifStatus("unsupported");
-    } else {
-      setNotifStatus(Notification.permission);
-    }
+    if (!("Notification" in window)) setNotifStatus("unsupported");
+    else setNotifStatus(Notification.permission);
+    return onContactsChanged(reload);
   }, [reload]);
 
-  // Browser notification for overdue on mount
   useEffect(() => {
     if (typeof window === "undefined" || Notification.permission !== "granted") return;
     const overdue = getOverdueFollowUps();
@@ -67,171 +114,317 @@ export default function ContactsPanel() {
 
   async function requestNotifications() {
     if (!("Notification" in window)) return;
-    const permission = await Notification.requestPermission();
-    setNotifStatus(permission);
+    setNotifStatus(await Notification.requestPermission());
   }
 
-  function handleMarkDone(id: string, done: boolean) {
-    updateContact(id, { followUpDone: done });
-    reload();
+  function openRow(c: ContactLog) {
+    if (expandedId === c.id) {
+      setExpandedId(null);
+      setEditForm(null);
+    } else {
+      setExpandedId(c.id);
+      setEditForm({
+        method: c.method,
+        note: c.note || "",
+        followUpAt: c.followUpAt || "",
+        followUpDone: c.followUpDone,
+      });
+    }
+  }
+
+  function saveEdit(id: string) {
+    if (!editForm) return;
+    updateContact(id, {
+      method: editForm.method,
+      note: editForm.note,
+      followUpAt: editForm.followUpAt || undefined,
+      followUpDone: editForm.followUpAt ? editForm.followUpDone : false,
+    });
+    const hasFollowUp = !!(editForm.followUpAt && !editForm.followUpDone);
+    setExpandedId(null);
+    setEditForm(null);
+    if (hasFollowUp) setFilter("followup"); // auto-switch to Follow-up tab
   }
 
   function handleDelete(id: string) {
+    if (!confirm("Delete this contact log?")) return;
     deleteContact(id);
-    reload();
+    if (expandedId === id) { setExpandedId(null); setEditForm(null); }
+  }
+
+  function toggleSort(col: SortCol) {
+    if (sortCol === col) setSortAsc((v) => !v);
+    else { setSortCol(col); setSortAsc(true); }
   }
 
   const today = new Date().toISOString().slice(0, 10);
 
-  const filtered = contacts.filter((c) => {
-    if (filter === "overdue") return !c.followUpDone && c.followUpAt && c.followUpAt < today;
-    if (filter === "upcoming") return !c.followUpDone && c.followUpAt && c.followUpAt >= today;
-    if (filter === "done") return c.followUpDone;
-    return true;
-  });
+  const stats = useMemo(() => ({
+    total: contacts.length,
+    followup: contacts.filter((c) => c.followUpAt && !c.followUpDone).length,
+    overdue: contacts.filter((c) => !c.followUpDone && c.followUpAt && c.followUpAt < today).length,
+    done: contacts.filter((c) => c.followUpDone).length,
+  }), [contacts, today]);
 
-  const overdueCount = contacts.filter((c) => !c.followUpDone && c.followUpAt && c.followUpAt < today).length;
-  const upcomingCount = contacts.filter((c) => !c.followUpDone && c.followUpAt && c.followUpAt >= today).length;
+  const filtered = useMemo(() => {
+    let list = contacts.filter((c) => {
+      if (filter === "followup") return !!(c.followUpAt && !c.followUpDone);
+      if (filter === "overdue")  return !c.followUpDone && c.followUpAt && c.followUpAt < today;
+      if (filter === "done")     return c.followUpDone;
+      return true;
+    });
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter((c) =>
+        c.buildingName.toLowerCase().includes(q) ||
+        c.buildingAddress?.toLowerCase().includes(q) ||
+        c.note?.toLowerCase().includes(q)
+      );
+    }
+    return [...list].sort((a, b) => {
+      let cmp = 0;
+      if (sortCol === "name")    cmp = a.buildingName.localeCompare(b.buildingName);
+      if (sortCol === "date")    cmp = a.contactedAt.localeCompare(b.contactedAt);
+      if (sortCol === "followup") cmp = (a.followUpAt ?? "").localeCompare(b.followUpAt ?? "");
+      if (sortCol === "method")  cmp = a.method.localeCompare(b.method);
+      return sortAsc ? cmp : -cmp;
+    });
+  }, [contacts, filter, search, sortCol, sortAsc, today]);
+
+  function SortIcon({ col }: { col: SortCol }) {
+    if (sortCol !== col) return <span style={{ opacity: 0.3, marginLeft: "4px" }}>↕</span>;
+    return <span style={{ marginLeft: "4px", color: "var(--amber)" }}>{sortAsc ? "↑" : "↓"}</span>;
+  }
+
+  const thStyle: React.CSSProperties = {
+    padding: "10px 14px",
+    fontSize: "11px",
+    color: "var(--text-secondary)",
+    fontWeight: 600,
+    textAlign: "left",
+    borderBottom: "1px solid var(--border)",
+    whiteSpace: "nowrap",
+    cursor: "pointer",
+    userSelect: "none",
+    background: "var(--bg-elevated)",
+  };
+
+  const FILTERS: { mode: FilterMode; label: (s: typeof stats) => string; urgent?: boolean }[] = [
+    { mode: "all",      label: (s) => `All (${s.total})` },
+    { mode: "followup", label: (s) => `Follow-up (${s.followup})` },
+    { mode: "overdue",  label: (s) => `Overdue (${s.overdue})`, urgent: true },
+    { mode: "done",     label: (s) => `Done (${s.done})` },
+  ];
 
   return (
     <div style={{ animation: "fadeSlideIn 0.3s ease" }}>
 
       {/* Notification banner */}
       {notifStatus === "default" && (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", border: "1px solid rgba(212,160,60,0.3)", borderRadius: "3px", background: "rgba(212,160,60,0.05)", marginBottom: "16px" }}>
-          <span style={{ fontSize: "12px", color: "var(--text-secondary)", letterSpacing: "0.04em" }}>🔔 Enable browser notifications to get follow-up reminders</span>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", border: "1px solid var(--amber-dim)", borderRadius: "8px", background: "var(--amber-glow)", marginBottom: "20px" }}>
+          <span style={{ fontSize: "13px", color: "var(--text-secondary)" }}>🔔 Enable browser notifications to get follow-up reminders</span>
           <button onClick={requestNotifications}
-            style={{ fontSize: "11px", color: "var(--amber)", background: "rgba(212,160,60,0.1)", border: "1px solid var(--amber)", borderRadius: "3px", padding: "4px 12px", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.08em" }}
+            style={{ fontSize: "12px", color: "var(--amber)", background: "var(--amber-glow)", border: "1px solid var(--amber)", borderRadius: "6px", padding: "4px 14px", cursor: "pointer" }}
           >Enable</button>
         </div>
       )}
 
-      {/* Overdue alert */}
-      {overdueCount > 0 && filter !== "done" && (
-        <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 16px", border: "1px solid rgba(192,112,112,0.4)", borderRadius: "3px", background: "rgba(180,60,60,0.06)", marginBottom: "14px", cursor: "pointer" }}
-          onClick={() => setFilter("overdue")}
-        >
-          <span style={{ fontSize: "18px" }}>⚠</span>
-          <span style={{ fontSize: "13px", color: "#c07070", letterSpacing: "0.04em" }}>
-            <strong>{overdueCount}</strong> overdue follow-up{overdueCount > 1 ? "s" : ""} — click to view
-          </span>
-        </div>
-      )}
-
-      {/* Filter tabs */}
-      <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "16px", flexWrap: "wrap" }}>
-        {([
-          { mode: "all",      label: `All (${contacts.length})` },
-          { mode: "overdue",  label: `Overdue (${overdueCount})`, color: overdueCount > 0 ? "#c07070" : undefined },
-          { mode: "upcoming", label: `Upcoming (${upcomingCount})` },
-          { mode: "done",     label: "Done" },
-        ] as { mode: FilterMode; label: string; color?: string }[]).map(({ mode, label, color }) => (
-          <button key={mode} onClick={() => setFilter(mode)}
-            style={{ fontSize: "11px", padding: "4px 12px", borderRadius: "3px", border: `1px solid ${filter === mode ? (color ?? "var(--amber)") : "var(--border)"}`, background: filter === mode ? `${(color ?? "var(--amber)")}1a` : "transparent", color: filter === mode ? (color ?? "var(--amber)") : "var(--text-secondary)", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.06em", transition: "all 0.15s" }}
-          >{label}</button>
-        ))}
+      {/* Stats row */}
+      <div style={{ display: "flex", gap: "12px", marginBottom: "20px" }}>
+        <StatCard label="Total Contacts" value={stats.total}   color="var(--amber)" />
+        <StatCard label="Follow-ups"     value={stats.followup} color="var(--text-primary)" />
+        <StatCard label="Overdue"        value={stats.overdue}  color={stats.overdue > 0 ? "#e05555" : "var(--text-dim)"} />
+        <StatCard label="Done"           value={stats.done}     color="var(--green-bright)" />
       </div>
 
-      {/* Contact list */}
-      {filtered.length === 0 ? (
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "280px", gap: "12px" }}>
-          <div style={{ fontSize: "36px", color: "var(--text-dim)" }}>◈</div>
-          <div style={{ fontSize: "13px", color: "var(--text-secondary)", letterSpacing: "0.12em", textTransform: "uppercase" }}>
-            {filter === "all" ? "No contacts logged yet" : `No ${filter} follow-ups`}
-          </div>
-          <div style={{ fontSize: "11px", color: "var(--text-dim)" }}>
-            {filter === "all" && "Expand a lead and click \"Log Contact\" to get started"}
-          </div>
-        </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-          {filtered.map((c, i) => {
-            const meta = METHOD_META[c.method];
-            const isExpanded = expandedId === c.id;
-            const isOverdue = !c.followUpDone && c.followUpAt && c.followUpAt < today;
-
+      {/* Filter tabs + search */}
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: "4px" }}>
+          {FILTERS.map(({ mode, label, urgent }) => {
+            const isActive = filter === mode;
+            const color = urgent && stats.overdue > 0 ? "#e05555" : "var(--amber)";
             return (
-              <div key={c.id}
-                style={{ border: `1px solid ${isOverdue ? "rgba(192,112,112,0.3)" : "var(--border)"}`, borderRadius: "3px", background: isOverdue ? "rgba(180,60,60,0.03)" : "var(--bg-card)", animation: `rowReveal 0.25s ease ${Math.min(i * 0.025, 0.3)}s both`, borderLeft: `3px solid ${isOverdue ? "#c07070" : meta.color}` }}
-              >
-                {/* Row */}
-                <div style={{ display: "flex", alignItems: "center", gap: "12px", padding: "10px 14px", cursor: "pointer" }}
-                  onClick={() => setExpandedId(isExpanded ? null : c.id)}
-                >
-                  <span style={{ fontSize: "18px", flexShrink: 0 }}>{meta.icon}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "2px" }}>
-                      <span style={{ fontSize: "13px", color: "var(--text-primary)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.buildingName}</span>
-                      <span style={{ fontSize: "10px", color: meta.color, flexShrink: 0, letterSpacing: "0.06em" }}>{meta.label}</span>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-                      <span style={{ fontSize: "11px", color: "var(--text-dim)" }}>{formatDateTime(c.contactedAt)}</span>
-                      {c.note && <span style={{ fontSize: "11px", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "200px" }}>{c.note}</span>}
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
-                    {c.followUpAt && <FollowUpBadge dateStr={c.followUpAt} done={c.followUpDone} />}
-                    {c.followUpAt && !c.followUpDone && (
-                      <a href={googleCalendarLink(c)} target="_blank" rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        title="Add to Google Calendar"
-                        style={{ fontSize: "14px", textDecoration: "none", opacity: 0.7, transition: "opacity 0.15s" }}
-                        onMouseEnter={(e) => ((e.currentTarget as HTMLAnchorElement).style.opacity = "1")}
-                        onMouseLeave={(e) => ((e.currentTarget as HTMLAnchorElement).style.opacity = "0.7")}
-                      >📅</a>
-                    )}
-                    <span style={{ fontSize: "10px", color: "var(--text-dim)" }}>{isExpanded ? "▲" : "▼"}</span>
-                  </div>
-                </div>
-
-                {/* Expanded detail */}
-                {isExpanded && (
-                  <div style={{ padding: "10px 14px 14px", borderTop: "1px solid var(--border)", animation: "fadeSlideIn 0.15s ease" }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {c.buildingAddress && (
-                      <div style={{ fontSize: "11px", color: "var(--text-dim)", marginBottom: "8px" }}>📍 {c.buildingAddress}</div>
-                    )}
-                    {c.buildingPhone && (
-                      <div style={{ fontSize: "11px", color: "var(--text-dim)", marginBottom: "8px" }}>
-                        ☎ <a href={`tel:${c.buildingPhone}`} style={{ color: "var(--amber)", textDecoration: "none" }}>{c.buildingPhone}</a>
-                      </div>
-                    )}
-                    {c.note && (
-                      <div style={{ fontSize: "12px", color: "var(--text-secondary)", background: "rgba(212,160,60,0.03)", border: "1px solid var(--border)", borderRadius: "3px", padding: "8px 10px", lineHeight: 1.6, marginBottom: "10px", whiteSpace: "pre-wrap" }}>{c.note}</div>
-                    )}
-                    {c.followUpAt && (
-                      <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px", flexWrap: "wrap" }}>
-                        <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
-                          Follow-up: <strong style={{ color: "var(--text-primary)" }}>{formatDate(c.followUpAt)}</strong>
-                        </span>
-                        {!c.followUpDone && (
-                          <a href={googleCalendarLink(c)} target="_blank" rel="noopener noreferrer"
-                            style={{ fontSize: "11px", color: "#6090c0", textDecoration: "none", border: "1px solid rgba(96,144,192,0.35)", borderRadius: "3px", padding: "2px 10px", letterSpacing: "0.05em" }}
-                          >📅 Add to Google Calendar</a>
-                        )}
-                      </div>
-                    )}
-                    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                      {c.followUpAt && !c.followUpDone && (
-                        <button onClick={() => handleMarkDone(c.id, true)}
-                          style={{ fontSize: "11px", padding: "4px 12px", border: "1px solid rgba(90,138,74,0.4)", borderRadius: "3px", background: "rgba(90,138,74,0.08)", color: "var(--green-bright)", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}
-                        >✓ Mark Follow-up Done</button>
-                      )}
-                      {c.followUpDone && (
-                        <button onClick={() => handleMarkDone(c.id, false)}
-                          style={{ fontSize: "11px", padding: "4px 12px", border: "1px solid var(--border)", borderRadius: "3px", background: "transparent", color: "var(--text-dim)", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}
-                        >↩ Reopen</button>
-                      )}
-                      <button onClick={() => handleDelete(c.id)}
-                        style={{ fontSize: "11px", padding: "4px 12px", border: "1px solid rgba(180,60,60,0.3)", borderRadius: "3px", background: "transparent", color: "#c07070", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}
-                      >✕ Delete</button>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <button key={mode} onClick={() => setFilter(mode)}
+                style={{ fontSize: "12px", padding: "5px 14px", borderRadius: "6px", border: `1px solid ${isActive ? color : "var(--border)"}`, background: isActive ? (urgent && stats.overdue > 0 ? "rgba(224,85,85,0.1)" : "var(--amber-glow)") : "transparent", color: isActive ? color : "var(--text-secondary)", cursor: "pointer", transition: "all 0.15s" }}
+              >{label(stats)}</button>
             );
           })}
+        </div>
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search company, address, notes..."
+          style={{ ...inputStyle, flex: 1, minWidth: "180px", padding: "6px 12px" }}
+        />
+      </div>
+
+      {/* Master list table */}
+      {filtered.length === 0 ? (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "260px", gap: "12px", border: "1px dashed var(--border)", borderRadius: "8px" }}>
+          <div style={{ fontSize: "32px", color: "var(--text-dim)" }}>◈</div>
+          <div style={{ fontSize: "13px", color: "var(--text-secondary)" }}>
+            {search ? `No results for "${search}"` : filter === "all" ? "No contacts logged yet" : `No ${filter} entries`}
+          </div>
+          {filter === "all" && !search && (
+            <div style={{ fontSize: "12px", color: "var(--text-dim)" }}>Expand a lead and click "Log Contact" to get started</div>
+          )}
+        </div>
+      ) : (
+        <div style={{ border: "1px solid var(--border)", borderRadius: "10px", overflow: "hidden" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={{ ...thStyle, width: "32px", textAlign: "center", cursor: "default" }}>#</th>
+                <th style={{ ...thStyle }} onClick={() => toggleSort("name")}>Company <SortIcon col="name" /></th>
+                <th style={{ ...thStyle }} onClick={() => toggleSort("method")}>Method <SortIcon col="method" /></th>
+                <th style={{ ...thStyle }} onClick={() => toggleSort("date")}>Contacted <SortIcon col="date" /></th>
+                <th style={{ ...thStyle, cursor: "default" }}>Notes</th>
+                <th style={{ ...thStyle }} onClick={() => toggleSort("followup")}>Follow-up <SortIcon col="followup" /></th>
+                <th style={{ ...thStyle, width: "60px", cursor: "default" }}>Del</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((c, i) => {
+                const meta = METHOD_META[c.method];
+                const isExpanded = expandedId === c.id;
+                const isOverdue = !c.followUpDone && c.followUpAt && c.followUpAt < today;
+
+                return (
+                  <React.Fragment key={c.id}>
+                    <tr
+                      onClick={() => openRow(c)}
+                      style={{
+                        cursor: "pointer",
+                        borderTop: i > 0 ? "1px solid var(--border)" : "none",
+                        background: isExpanded ? "var(--bg-elevated)" : "var(--bg-card)",
+                        transition: "background 0.15s",
+                        borderLeft: `3px solid ${isOverdue ? "#e05555" : meta.color}`,
+                      }}
+                      onMouseEnter={(e) => { if (!isExpanded) (e.currentTarget as HTMLElement).style.background = "var(--bg-elevated)"; }}
+                      onMouseLeave={(e) => { if (!isExpanded) (e.currentTarget as HTMLElement).style.background = "var(--bg-card)"; }}
+                    >
+                      <td style={{ padding: "12px 10px", textAlign: "center", fontSize: "12px", color: "var(--text-dim)", fontWeight: 600 }}>
+                        {String(i + 1).padStart(2, "0")}
+                      </td>
+                      <td style={{ padding: "12px 14px", maxWidth: "200px" }}>
+                        <div style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.buildingName}</div>
+                        {c.buildingAddress && (
+                          <div style={{ fontSize: "11px", color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: "2px" }}>{c.buildingAddress}</div>
+                        )}
+                      </td>
+                      <td style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>
+                        <span style={{ fontSize: "13px", color: meta.color }}>{meta.icon} {meta.label}</span>
+                      </td>
+                      <td style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>
+                        <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{formatDateTime(c.contactedAt)}</span>
+                      </td>
+                      <td style={{ padding: "12px 14px", maxWidth: "180px" }}>
+                        <span style={{ fontSize: "12px", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>
+                          {c.note || <span style={{ color: "var(--text-dim)", fontStyle: "italic" }}>—</span>}
+                        </span>
+                      </td>
+                      <td style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>
+                        {c.followUpAt
+                          ? <FollowUpBadge dateStr={c.followUpAt} done={c.followUpDone} />
+                          : <span style={{ fontSize: "12px", color: "var(--text-dim)" }}>—</span>}
+                      </td>
+                      <td style={{ padding: "12px 10px", textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
+                        <button onClick={() => handleDelete(c.id)} title="Delete"
+                          style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-dim)", fontSize: "13px", padding: "0", opacity: 0.5, transition: "all 0.15s" }}
+                          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.opacity = "1"; (e.currentTarget as HTMLElement).style.color = "#e05555"; }}
+                          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.opacity = "0.5"; (e.currentTarget as HTMLElement).style.color = "var(--text-dim)"; }}
+                        >✕</button>
+                      </td>
+                    </tr>
+
+                    {/* Inline edit form */}
+                    {isExpanded && editForm && (
+                      <tr key={`${c.id}-edit`} style={{ background: "var(--bg-elevated)", borderTop: "1px solid var(--border)" }}>
+                        <td style={{ borderLeft: `3px solid ${meta.color}` }} />
+                        <td colSpan={6} style={{ padding: "16px 18px" }} onClick={(e) => e.stopPropagation()}>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "12px" }}>
+
+                            {/* Method */}
+                            <div>
+                              <label style={{ fontSize: "11px", color: "var(--text-secondary)", display: "block", marginBottom: "5px", fontWeight: 600 }}>CONTACT METHOD</label>
+                              <select
+                                value={editForm.method}
+                                onChange={(e) => setEditForm({ ...editForm, method: e.target.value as ContactLog["method"] })}
+                                style={{ ...inputStyle }}
+                              >
+                                {(Object.keys(METHOD_META) as ContactLog["method"][]).map((m) => (
+                                  <option key={m} value={m}>{METHOD_META[m].icon} {METHOD_META[m].label}</option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Follow-up date */}
+                            <div>
+                              <label style={{ fontSize: "11px", color: "var(--text-secondary)", display: "block", marginBottom: "5px", fontWeight: 600 }}>FOLLOW-UP DATE</label>
+                              <input
+                                type="date"
+                                value={editForm.followUpAt}
+                                onChange={(e) => setEditForm({ ...editForm, followUpAt: e.target.value, followUpDone: false })}
+                                style={{ ...inputStyle }}
+                              />
+                            </div>
+
+                            {/* Notes — full width */}
+                            <div style={{ gridColumn: "1 / -1" }}>
+                              <label style={{ fontSize: "11px", color: "var(--text-secondary)", display: "block", marginBottom: "5px", fontWeight: 600 }}>NOTES</label>
+                              <textarea
+                                value={editForm.note}
+                                onChange={(e) => setEditForm({ ...editForm, note: e.target.value })}
+                                rows={3}
+                                placeholder="Add notes about this contact..."
+                                style={{ ...inputStyle, resize: "vertical", lineHeight: 1.6 }}
+                              />
+                            </div>
+
+                            {/* Mark done checkbox (only if followUpAt is set) */}
+                            {editForm.followUpAt && (
+                              <div style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: "8px" }}>
+                                <input
+                                  type="checkbox"
+                                  id={`done-${c.id}`}
+                                  checked={editForm.followUpDone}
+                                  onChange={(e) => setEditForm({ ...editForm, followUpDone: e.target.checked })}
+                                  style={{ width: "15px", height: "15px", cursor: "pointer", accentColor: "var(--green-bright)" }}
+                                />
+                                <label htmlFor={`done-${c.id}`} style={{ fontSize: "13px", color: "var(--text-secondary)", cursor: "pointer" }}>
+                                  Mark follow-up as done
+                                </label>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Buttons */}
+                          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                            <button onClick={() => saveEdit(c.id)}
+                              style={{ fontSize: "13px", padding: "6px 18px", borderRadius: "6px", border: "none", background: "var(--amber)", color: "var(--bg)", fontWeight: 600, cursor: "pointer" }}
+                            >Save</button>
+                            <button onClick={() => { setExpandedId(null); setEditForm(null); }}
+                              style={{ fontSize: "13px", padding: "6px 14px", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-secondary)", cursor: "pointer" }}
+                            >Cancel</button>
+                            {editForm.followUpAt && !editForm.followUpDone && (
+                              <a href={googleCalendarLink({ ...c, ...editForm, followUpAt: editForm.followUpAt || undefined })} target="_blank" rel="noopener noreferrer"
+                                style={{ fontSize: "12px", color: "var(--text-secondary)", textDecoration: "none", border: "1px solid var(--border)", borderRadius: "6px", padding: "5px 12px" }}
+                              >📅 Calendar</a>
+                            )}
+                            {c.buildingPhone && (
+                              <span style={{ marginLeft: "auto", fontSize: "13px", color: "var(--text-secondary)" }}>
+                                ☎ <a href={`tel:${c.buildingPhone}`} style={{ color: "var(--amber)", textDecoration: "none" }}>{c.buildingPhone}</a>
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

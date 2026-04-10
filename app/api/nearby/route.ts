@@ -76,6 +76,28 @@ const RESIDENTIAL_NAME_KEYWORDS = [
   "garden", "grove", "heights", "terrace",
 ];
 
+function extractDomain(url?: string): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+  } catch { return null; }
+}
+
+function formatMalaysianPhone(raw?: string): string | undefined {
+  if (!raw) return undefined;
+  const digits = raw.replace(/\D/g, "");
+  if (!digits.startsWith("60") || digits.length < 9) return raw;
+  const after60 = digits.slice(2);
+  if (after60.startsWith("1")) {
+    const prefix = after60.startsWith("11") ? after60.slice(0, 3) : after60.slice(0, 2);
+    const rest = after60.slice(prefix.length);
+    return `+60${prefix}-${rest.slice(0, 3)}-${rest.slice(3)}`;
+  }
+  const area = after60.slice(0, 1);
+  const rest = after60.slice(1);
+  return `+60${area}-${rest.slice(0, 4)}-${rest.slice(4)}`;
+}
+
 function inferType(name: string, types: string[]): "office" | "residential" {
   const lower = name.toLowerCase();
   const resScore = RESIDENTIAL_NAME_KEYWORDS.filter((k) => lower.includes(k)).length;
@@ -232,7 +254,7 @@ export async function POST(req: NextRequest) {
     const results = await Promise.allSettled(searches);
 
     const seen = new Set<string>();
-    const buildings = results
+    const mapped = results
       .flatMap((r) => (r.status === "fulfilled" ? r.value : []))
       .filter((p) => {
         if (!p.id || seen.has(p.id)) return false;
@@ -262,11 +284,28 @@ export async function POST(req: NextRequest) {
           reviewCount,
           score: computeScore(rating, reviewCount, distance, radius),
           nearestCenter: center,
-          phone: p.internationalPhoneNumber ?? p.nationalPhoneNumber,
+          phone: formatMalaysianPhone(p.internationalPhoneNumber ?? p.nationalPhoneNumber),
           website: p.websiteUri,
         };
-      })
-      .sort((a, b) => b.score - a.score); // default: sort by score
+      });
+
+    // Domain deduplication: when multiple places share a website domain, keep the highest-scoring one
+    const domainMap = new Map<string, number>();
+    const domainDeduped: (typeof mapped[number])[] = [];
+    for (const b of mapped) {
+      const domain = extractDomain(b.website);
+      if (domain) {
+        const existingIdx = domainMap.get(domain);
+        if (existingIdx !== undefined) {
+          if (b.score > domainDeduped[existingIdx].score) domainDeduped[existingIdx] = b;
+          continue;
+        }
+        domainMap.set(domain, domainDeduped.length);
+      }
+      domainDeduped.push(b);
+    }
+
+    const buildings = domainDeduped.sort((a, b) => b.score - a.score);
 
     return NextResponse.json({ buildings });
   } catch (err) {

@@ -3,11 +3,12 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import SearchPanel from "@/components/SearchPanel";
 import ResultsList from "@/components/ResultsList";
+import ThemeSwitcher, { useTheme } from "@/components/ThemeSwitcher";
 import dynamic from "next/dynamic";
 import { Building, SearchParams } from "@/types";
 import { searchNearbyBuildings } from "@/lib/places";
 import { pushHistory } from "@/lib/history";
-import { getOverdueFollowUps } from "@/lib/contacts";
+import { getOverdueFollowUps, onContactsChanged } from "@/lib/contacts";
 
 const ContactsPanel = dynamic(() => import("@/components/ContactsPanel"), { ssr: false });
 
@@ -23,10 +24,13 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<AppTab>("scan");
   const [overdueCount, setOverdueCount] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
+  const { themeId, switchTheme } = useTheme();
 
   useEffect(() => {
-    setOverdueCount(getOverdueFollowUps().length);
-  }, [activeTab]);
+    const update = () => setOverdueCount(getOverdueFollowUps().length);
+    update();
+    return onContactsChanged(update);
+  }, []);
 
   const handleSearch = useCallback(async (params: SearchParams) => {
     abortRef.current?.abort();
@@ -54,12 +58,27 @@ export default function Home() {
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
-      <header style={{ borderBottom: "1px solid var(--border)", padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "linear-gradient(180deg, rgba(212,160,60,0.04) 0%, transparent 100%)", flexShrink: 0 }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: "12px" }}>
-          <span style={{ fontFamily: "'Syne', sans-serif", fontSize: "26px", fontWeight: 800, letterSpacing: "0.1em", color: "var(--amber)", textTransform: "uppercase" }}>URBSCAN</span>
-          <span style={{ fontSize: "12px", color: "var(--text-dim)", letterSpacing: "0.15em", textTransform: "uppercase" }}>B2B 线索引擎 v2.0</span>
-        </div>
+      <header style={{ position: "relative", borderBottom: "1px solid var(--border)", padding: "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "linear-gradient(180deg, var(--amber-glow) 0%, transparent 100%)", flexShrink: 0, overflow: "hidden" }}>
+        {/* Radar sweep line */}
+        <div className="radar-sweep" style={{ position: "absolute", top: 0, bottom: 0, width: "80px", background: "linear-gradient(90deg, transparent, var(--amber-glow), var(--cyan-glow), transparent)", animation: "radarSweep 6s ease-in-out infinite", pointerEvents: "none" }} />
+        {/* Bottom accent line */}
+        <div className="bottom-accent-line" style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: "1px", background: "linear-gradient(90deg, transparent 0%, var(--amber-dim) 30%, var(--cyan-dim) 70%, transparent 100%)", opacity: 0.4 }} />
+
         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+          {/* Logo */}
+          <div style={{ display: "flex", alignItems: "baseline", gap: "10px" }}>
+            <span style={{ fontFamily: "'Syne', sans-serif", fontSize: "26px", fontWeight: 800, letterSpacing: "0.12em", color: "var(--amber)", textTransform: "uppercase", textShadow: "0 0 20px var(--amber-dim)" }}>URBSCAN</span>
+            <span style={{ fontSize: "11px", color: "var(--text-dim)", letterSpacing: "0.2em", textTransform: "uppercase", borderLeft: "1px solid var(--border)", paddingLeft: "10px" }}>B2B INTEL v2.0</span>
+          </div>
+          {/* System indicators */}
+          <div className="signal-bars" style={{ display: "flex", alignItems: "flex-end", gap: "2px", marginLeft: "4px" }}>
+            {[0.35, 0.5, 0.7, 0.85, 1].map((h, i) => (
+              <div key={i} style={{ width: "3px", height: `${6 + i * 3}px`, background: "var(--cyan)", opacity: h, borderRadius: "1px", animation: `signalGrow 0.4s ease ${i * 0.08}s both`, transformOrigin: "bottom" }} />
+            ))}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
           {/* Tab switcher */}
           <div style={{ display: "flex", gap: "2px" }}>
             {([
@@ -67,7 +86,7 @@ export default function Home() {
               { tab: "contacts", label: "📋 CONTACTS" },
             ] as { tab: AppTab; label: string }[]).map(({ tab, label }) => (
               <button key={tab} onClick={() => setActiveTab(tab)}
-                style={{ position: "relative", fontSize: "11px", padding: "5px 14px", border: `1px solid ${activeTab === tab ? "var(--amber)" : "var(--border)"}`, borderRadius: "3px", background: activeTab === tab ? "rgba(212,160,60,0.1)" : "transparent", color: activeTab === tab ? "var(--amber)" : "var(--text-dim)", cursor: "pointer", letterSpacing: "0.12em", fontFamily: "'JetBrains Mono', monospace", transition: "all 0.15s" }}
+                style={{ position: "relative", fontSize: "13px", padding: "5px 14px", border: `1px solid ${activeTab === tab ? "var(--amber)" : "var(--border)"}`, borderRadius: "3px", background: activeTab === tab ? "var(--amber-glow)" : "transparent", color: activeTab === tab ? "var(--amber)" : "var(--text-dim)", cursor: "pointer", letterSpacing: "0.12em", fontFamily: "var(--font-ui)", transition: "all 0.2s", boxShadow: activeTab === tab ? "0 0 12px var(--amber-glow)" : "none" }}
               >
                 {label}
                 {tab === "contacts" && overdueCount > 0 && (
@@ -76,8 +95,13 @@ export default function Home() {
               </button>
             ))}
           </div>
-          <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "var(--green-bright)", boxShadow: "0 0 6px var(--green-bright)", animation: "scanPulse 2s ease-in-out infinite", display: "inline-block" }} />
-          <span style={{ fontSize: "12px", color: "var(--green-bright)", letterSpacing: "0.1em" }}>ONLINE</span>
+          {/* Theme switcher */}
+          <ThemeSwitcher themeId={themeId} onSwitch={switchTheme} />
+          {/* Online status */}
+          <div className="sys-status" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "var(--cyan)", boxShadow: "0 0 8px var(--cyan), 0 0 16px var(--cyan-dim)", animation: "scanPulse 2s ease-in-out infinite", display: "inline-block" }} />
+            <span style={{ fontSize: "13px", color: "var(--cyan)", letterSpacing: "0.14em", textShadow: "0 0 10px var(--cyan-dim)" }}>SYS·ONLINE</span>
+          </div>
         </div>
       </header>
 
@@ -96,17 +120,18 @@ export default function Home() {
         ) : (
           <section style={{ flex: 1, padding: "24px 32px", overflowY: "auto", minWidth: 0, maxWidth: "860px" }}>
             <div style={{ marginBottom: "20px" }}>
-              <div style={{ fontFamily: "'Syne', sans-serif", fontSize: "18px", fontWeight: 700, color: "var(--amber)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "4px" }}>Contact Log & Follow-ups</div>
-              <div style={{ fontSize: "12px", color: "var(--text-dim)", letterSpacing: "0.08em" }}>Track outreach history and never miss a follow-up</div>
+              <div style={{ fontFamily: "'Syne', sans-serif", fontSize: "20px", fontWeight: 700, color: "var(--amber)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "4px" }}>Contact Log & Follow-ups</div>
+              <div style={{ fontSize: "13px", color: "var(--text-dim)", letterSpacing: "0.08em" }}>Track outreach history and never miss a follow-up</div>
             </div>
             <ContactsPanel />
           </section>
         )}
       </main>
 
-      <footer style={{ borderTop: "1px solid var(--border)", padding: "8px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
-        <span style={{ fontSize: "11px", color: "var(--text-dim)", letterSpacing: "0.12em" }}>POWERED BY GOOGLE PLACES API (NEW)</span>
-        <span style={{ fontSize: "11px", color: "var(--text-dim)", letterSpacing: "0.12em" }}>© 2026 URBSCAN INTELLIGENCE</span>
+      <footer style={{ position: "relative", borderTop: "1px solid var(--border)", padding: "8px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+        <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "1px", background: "linear-gradient(90deg, transparent, var(--cyan-dim), var(--amber-dim), transparent)", opacity: 0.3 }} />
+        <span style={{ fontSize: "11px", color: "var(--text-dim)", letterSpacing: "0.18em" }}>◈ GOOGLE PLACES API (NEW) · HUNTER.IO · APOLLO.IO</span>
+        <span style={{ fontSize: "11px", color: "var(--text-dim)", letterSpacing: "0.15em" }}>URBSCAN INTELLIGENCE © 2026</span>
       </footer>
 
       <style>{`

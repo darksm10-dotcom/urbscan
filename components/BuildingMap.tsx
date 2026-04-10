@@ -79,7 +79,7 @@ export default function BuildingMap({ buildings, center, selectedId, onSelectId 
         alignItems: "center",
         justifyContent: "center",
         color: "var(--text-dim)",
-        fontSize: "12px",
+        fontSize: "15px",
         letterSpacing: "0.1em",
       }}>
         地图加载中...
@@ -136,13 +136,13 @@ export default function BuildingMap({ buildings, center, selectedId, onSelectId 
         >
           <div style={{
             fontFamily: "'JetBrains Mono', monospace",
-            fontSize: "12px",
+            fontSize: "15px",
             color: "#1a1810",
             maxWidth: "200px",
             lineHeight: 1.5,
           }}>
             <div style={{ fontWeight: 600, marginBottom: "2px" }}>{selectedBuilding.name}</div>
-            <div style={{ fontSize: "11px", color: "#6b5f40" }}>{selectedBuilding.address}</div>
+            <div style={{ fontSize: "13px", color: "#6b5f40" }}>{selectedBuilding.address}</div>
           </div>
         </InfoWindow>
       )}

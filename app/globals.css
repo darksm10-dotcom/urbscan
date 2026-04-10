@@ -1,21 +1,26 @@
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@300;400;500&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
 @import "tailwindcss";
 
 :root {
-  --bg: #0c0b09;
-  --bg-card: #111009;
-  --bg-elevated: #1a1810;
-  --border: rgba(212, 160, 60, 0.15);
-  --border-bright: rgba(212, 160, 60, 0.4);
-  --amber: #d4a03c;
-  --amber-dim: rgba(212, 160, 60, 0.6);
-  --amber-glow: rgba(212, 160, 60, 0.08);
-  --text-primary: #e8dfc8;
-  --text-secondary: #8c7f65;
-  --text-dim: #4a4435;
-  --green: #5a8a4a;
-  --green-bright: #7ab86a;
-  --red: #8a4a4a;
+  --font-ui: 'JetBrains Mono', monospace;
+  --bg: #060810;
+  --bg-card: #090d16;
+  --bg-elevated: #0e1520;
+  --border: rgba(0, 168, 255, 0.12);
+  --border-bright: rgba(0, 168, 255, 0.4);
+  --amber: #00a8ff;
+  --amber-dim: rgba(0, 168, 255, 0.55);
+  --amber-glow: rgba(0, 168, 255, 0.08);
+  --cyan: #e8f4ff;
+  --cyan-dim: rgba(232, 244, 255, 0.45);
+  --cyan-glow: rgba(232, 244, 255, 0.07);
+  --grid-dot: rgba(0, 168, 255, 0.045);
+  --text-primary: #d0e8ff;
+  --text-secondary: #5a7a9a;
+  --text-dim: #2a3a52;
+  --green: #1a6a8a;
+  --green-bright: #00c8ff;
+  --red: #4a2a6a;
 }
 
 * {
@@ -29,24 +34,30 @@ html, body {
 }
 
 body {
-  background: var(--bg);
+  background-color: var(--bg);
+  /* Tactical dot grid */
+  background-image:
+    radial-gradient(circle, var(--grid-dot) 1px, transparent 1px);
+  background-size: 24px 24px;
   color: var(--text-primary);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-ui);
   overflow-x: hidden;
 }
 
-/* Subtle noise texture overlay */
+/* Noise texture + vignette */
 body::before {
   content: '';
   position: fixed;
   inset: 0;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+  background-image:
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse 80% 70% at 50% 0%, transparent 60%, rgba(0,0,0,0.5) 100%);
   pointer-events: none;
   z-index: 1000;
-  opacity: 0.4;
+  opacity: 0.5;
 }
 
-/* Scanline effect */
+/* Scanlines */
 body::after {
   content: '';
   position: fixed;
@@ -54,44 +65,47 @@ body::after {
   background: repeating-linear-gradient(
     0deg,
     transparent,
-    transparent 2px,
-    rgba(0,0,0,0.03) 2px,
-    rgba(0,0,0,0.03) 4px
+    transparent 3px,
+    rgba(0, 0, 0, 0.045) 3px,
+    rgba(0, 0, 0, 0.045) 4px
   );
   pointer-events: none;
   z-index: 999;
 }
 
-/* Input reset */
-input, button, select {
-  font-family: 'JetBrains Mono', monospace;
+/* Input/button reset */
+input, button, select, textarea {
+  font-family: var(--font-ui);
 }
 
 /* Scrollbar */
-::-webkit-scrollbar {
-  width: 4px;
-}
-::-webkit-scrollbar-track {
-  background: var(--bg);
-}
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb {
-  background: var(--border-bright);
+  background: linear-gradient(180deg, var(--amber-dim), var(--cyan-dim));
   border-radius: 2px;
 }
 
-/* Animations */
+/* ── Input focus glow ──────────────────────────────── */
+input:focus, textarea:focus {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--amber-dim), 0 0 16px var(--amber-glow);
+}
+
+/* ── Core Animations ───────────────────────────────── */
+
 @keyframes fadeSlideIn {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(10px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes scanPulse {
-  0%, 100% { opacity: 0.5; }
+  0%, 100% { opacity: 0.4; }
   50%       { opacity: 1; }
 }
 
 @keyframes rowReveal {
-  from { opacity: 0; transform: translateX(-6px); }
+  from { opacity: 0; transform: translateX(-8px); }
   to   { opacity: 1; transform: translateX(0); }
 }
 
@@ -104,6 +118,55 @@ input, button, select {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0; }
 }
+
+/* Sonar ping — for HIGH-score lead badges */
+@keyframes sonarPing {
+  0%   { transform: scale(1);   opacity: 0.7; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+
+/* Radar sweep — horizontal scan line */
+@keyframes radarSweep {
+  0%   { left: -3px; opacity: 0; }
+  5%   { opacity: 1; }
+  95%  { opacity: 1; }
+  100% { left: 100%; opacity: 0; }
+}
+
+/* Border glow pulse */
+@keyframes borderPulse {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50%       { box-shadow: 0 0 18px 1px rgba(212,160,60,0.12); }
+}
+
+/* Cyan border pulse */
+@keyframes cyanPulse {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50%       { box-shadow: 0 0 16px 2px rgba(0,212,168,0.15); }
+}
+
+/* Glitch shift — subtle on hover */
+@keyframes glitchShift {
+  0%, 85%, 100% { transform: translate(0,0); }
+  86% { transform: translate(-2px, 0); }
+  87% { transform: translate(2px, 0); }
+  88% { transform: translate(-1px, 0); }
+  89% { transform: translate(0, 0); }
+}
+
+/* Signal bar column grow */
+@keyframes signalGrow {
+  from { transform: scaleY(0); }
+  to   { transform: scaleY(1); }
+}
+
+/* Data ticker scroll */
+@keyframes dataTicker {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+/* ── Utility Classes ───────────────────────────────── */
 
 .animate-fade-slide {
   animation: fadeSlideIn 0.4s ease both;
@@ -122,4 +185,157 @@ input, button, select {
   animation: blink 1s step-end infinite;
   color: var(--amber);
   margin-left: 2px;
+}
+
+/* Tactical corner brackets — add to a container */
+.tac-corners {
+  position: relative;
+}
+.tac-corners::before,
+.tac-corners::after {
+  content: '';
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-color: var(--amber-dim);
+  border-style: solid;
+  opacity: 0.6;
+  pointer-events: none;
+}
+.tac-corners::before {
+  top: -1px; left: -1px;
+  border-width: 1px 0 0 1px;
+}
+.tac-corners::after {
+  bottom: -1px; right: -1px;
+  border-width: 0 1px 1px 0;
+}
+
+/* Glow card — on hover */
+.glow-card {
+  transition: box-shadow 0.25s ease, border-color 0.25s ease;
+}
+.glow-card:hover {
+  box-shadow: 0 0 20px var(--amber-glow);
+  border-color: var(--amber-dim) !important;
+}
+
+/* High lead row pulse */
+.high-lead {
+  animation: borderPulse 3s ease-in-out infinite;
+}
+
+/* Status dot pulse */
+.status-pulse {
+  animation: cyanPulse 2s ease-in-out infinite;
+}
+
+/* ── Apple / Clean theme overrides ────────────────────
+   Using !important to override all inline styles.
+   ───────────────────────────────────────────────────── */
+
+[data-theme="apple"] body {
+  background-image: none;
+  background-color: #ffffff !important;
+}
+
+[data-theme="apple"] body::before,
+[data-theme="apple"] body::after {
+  display: none;
+}
+
+/* Hide tactical UI decorations */
+[data-theme="apple"] .radar-sweep,
+[data-theme="apple"] .signal-bars,
+[data-theme="apple"] .sys-status,
+[data-theme="apple"] .bottom-accent-line {
+  display: none !important;
+}
+
+[data-theme="apple"] .tac-corners::before,
+[data-theme="apple"] .tac-corners::after {
+  display: none;
+}
+
+/* Header — frosted glass, minimal */
+[data-theme="apple"] header {
+  background: rgba(255, 255, 255, 0.88) !important;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08) !important;
+  padding: 10px 20px !important;
+}
+
+/* Sidebar */
+[data-theme="apple"] aside {
+  background: #f9f9f9 !important;
+  border-right: 1px solid rgba(0, 0, 0, 0.07) !important;
+}
+
+/* Footer */
+[data-theme="apple"] footer {
+  background: transparent !important;
+  border-top: 1px solid rgba(0, 0, 0, 0.06) !important;
+}
+
+/* Buttons — clean, no uppercase, normal spacing */
+[data-theme="apple"] button {
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  border-radius: 8px !important;
+  font-weight: 500 !important;
+}
+
+/* Inputs — clean, rounded */
+[data-theme="apple"] input,
+[data-theme="apple"] select,
+[data-theme="apple"] textarea {
+  border-radius: 8px !important;
+  letter-spacing: 0 !important;
+}
+
+[data-theme="apple"] input:focus,
+[data-theme="apple"] textarea:focus {
+  box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.2) !important;
+}
+
+/* Remove uppercase/tracking from labels and spans */
+[data-theme="apple"] span,
+[data-theme="apple"] label,
+[data-theme="apple"] div {
+  text-transform: none !important;
+  letter-spacing: normal !important;
+}
+
+/* Scrollbar */
+[data-theme="apple"] ::-webkit-scrollbar {
+  width: 5px;
+}
+[data-theme="apple"] ::-webkit-scrollbar-track {
+  background: transparent;
+}
+[data-theme="apple"] ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 4px;
+}
+
+/* Cards */
+[data-theme="apple"] .glow-card {
+  border-radius: 12px !important;
+}
+[data-theme="apple"] .glow-card:hover {
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08), 0 1px 4px rgba(0, 0, 0, 0.05) !important;
+  border-color: rgba(0, 0, 0, 0.1) !important;
+}
+
+/* Disable all pulse/glow animations */
+[data-theme="apple"] .high-lead,
+[data-theme="apple"] .status-pulse {
+  animation: none !important;
+  box-shadow: none !important;
+}
+
+/* Keep cursor blink but clean */
+[data-theme="apple"] .cursor-blink::after {
+  color: #0071e3;
 }
