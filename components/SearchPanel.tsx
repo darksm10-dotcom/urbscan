@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Industry, SearchLocation, SearchParams } from "@/types";
 import { geocodeAddress } from "@/lib/places";
 import { getHistory, HistoryEntry } from "@/lib/history";
+
+interface Suggestion { description: string; mainText: string; secondary: string; }
 
 interface SearchPanelProps {
   onSearch: (params: SearchParams) => void;
@@ -61,9 +63,13 @@ function detectIndustry(address: string): { industry: Industry; label: string } 
 }
 
 const label: React.CSSProperties = {
-  fontSize: "13px", letterSpacing: "0.2em",
-  color: "var(--text-dim)", textTransform: "uppercase" as const,
-  marginBottom: "8px", display: "block",
+  fontSize: "12px",
+  letterSpacing: "0.06em",
+  color: "var(--text-secondary)",
+  textTransform: "uppercase" as const,
+  fontWeight: 600,
+  marginBottom: "8px",
+  display: "block",
 };
 
 const divider: React.CSSProperties = {
@@ -71,11 +77,16 @@ const divider: React.CSSProperties = {
 };
 
 const inputBase: React.CSSProperties = {
-  width: "100%", background: "rgba(212,160,60,0.04)",
-  border: "1px solid var(--border)", borderRadius: "3px",
-  padding: "9px 12px", color: "var(--text-primary)",
-  fontSize: "13px", outline: "none", transition: "border-color 0.2s",
-  fontFamily: "'JetBrains Mono', monospace",
+  width: "100%",
+  background: "var(--bg-elevated)",
+  border: "1px solid var(--border)",
+  borderRadius: "6px",
+  padding: "10px 14px",
+  color: "var(--text-primary)",
+  fontSize: "14px",
+  outline: "none",
+  transition: "border-color 0.15s, box-shadow 0.15s",
+  fontFamily: "var(--font-ui)",
 };
 
 export default function SearchPanel({ onSearch, loading }: SearchPanelProps) {
@@ -90,12 +101,40 @@ export default function SearchPanel({ onSearch, loading }: SearchPanelProps) {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [suggestion, setSuggestion] = useState<{ industry: Industry; label: string } | null>(null);
   const [activePreset, setActivePreset] = useState<string | null>(null);
+  const [acSuggestions, setAcSuggestions] = useState<Record<number, Suggestion[]>>({});
+  const [acOpen, setAcOpen] = useState<Record<number, boolean>>({});
+  const debounceRefs = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
+
+  const fetchSuggestions = useCallback(async (idx: number, value: string) => {
+    clearTimeout(debounceRefs.current[idx]);
+    if (value.length < 2) {
+      setAcSuggestions((prev) => ({ ...prev, [idx]: [] }));
+      setAcOpen((prev) => ({ ...prev, [idx]: false }));
+      return;
+    }
+    debounceRefs.current[idx] = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/autocomplete?input=${encodeURIComponent(value)}`);
+        const data = await res.json();
+        setAcSuggestions((prev) => ({ ...prev, [idx]: data.suggestions ?? [] }));
+        setAcOpen((prev) => ({ ...prev, [idx]: true }));
+      } catch { /* ignore */ }
+    }, 280);
+  }, []);
+
+  function selectSuggestion(idx: number, description: string) {
+    setLocations((prev) => prev.map((l, i) => i === idx ? { address: description } : l));
+    setAcSuggestions((prev) => ({ ...prev, [idx]: [] }));
+    setAcOpen((prev) => ({ ...prev, [idx]: false }));
+    if (idx === 0) setSuggestion(detectIndustry(description));
+  }
 
   useEffect(() => { setHistory(getHistory()); }, []);
 
   function updateAddress(idx: number, val: string) {
     setLocations((prev) => prev.map((l, i) => i === idx ? { address: val } : l));
     if (idx === 0) setSuggestion(detectIndustry(val));
+    fetchSuggestions(idx, val);
   }
 
   function addLocation() {
@@ -178,8 +217,8 @@ export default function SearchPanel({ onSearch, loading }: SearchPanelProps) {
     <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", height: "100%", gap: 0 }}>
 
       <div style={{ marginBottom: "18px" }}>
-        <div style={{ fontSize: "13px", letterSpacing: "0.25em", color: "var(--amber)", textTransform: "uppercase", marginBottom: "4px" }}>◈ B2B 线索搜索</div>
-        <div style={{ height: "1px", background: "linear-gradient(90deg, var(--amber-dim), transparent)" }} />
+        <div style={{ fontSize: "16px", fontWeight: 700, color: "var(--text-primary)", marginBottom: "2px" }}>B2B 线索搜索</div>
+        <div style={{ fontSize: "13px", color: "var(--text-secondary)" }}>Search nearby buildings & companies</div>
       </div>
 
       {/* Building Type Quick Presets */}
@@ -195,21 +234,19 @@ export default function SearchPanel({ onSearch, loading }: SearchPanelProps) {
                 title={preset.hint}
                 onClick={() => handlePreset(preset)}
                 style={{
-                  background: active ? "rgba(0,168,255,0.12)" : "rgba(0,168,255,0.03)",
+                  background: active ? "var(--amber-glow)" : "var(--bg-elevated)",
                   border: `1px solid ${active ? "var(--amber)" : "var(--border)"}`,
-                  borderRadius: "3px",
+                  borderRadius: "8px",
                   padding: "8px 4px",
                   color: active ? "var(--amber)" : "var(--text-secondary)",
                   fontSize: "12px",
-                  letterSpacing: "0.04em",
                   cursor: "pointer",
                   transition: "all 0.15s",
                   display: "flex",
                   flexDirection: "column",
                   alignItems: "center",
                   gap: "3px",
-                  fontFamily: "'JetBrains Mono', monospace",
-                  boxShadow: active ? "0 0 10px rgba(0,168,255,0.15)" : "none",
+                  fontFamily: "var(--font-ui)",
                 }}
                 onMouseEnter={(e) => {
                   if (!active) {
@@ -245,18 +282,36 @@ export default function SearchPanel({ onSearch, loading }: SearchPanelProps) {
         {locations.map((loc, idx) => (
           <div key={idx} style={{ marginBottom: "6px" }}>
             <div style={{ display: "flex", gap: "4px" }}>
-              <input
-                type="text"
-                value={loc.address}
-                onChange={(e) => updateAddress(idx, e.target.value)}
-                placeholder={idx === 0 ? "Menara Kuala Lumpur..." : `地点 ${idx + 1}...`}
-                style={{ ...inputBase, flex: 1, fontSize: "13px" }}
-                onFocus={(e) => (e.target.style.borderColor = "var(--amber-dim)")}
-                onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
-              />
+              <div style={{ position: "relative", flex: 1 }}>
+                <input
+                  type="text"
+                  value={loc.address}
+                  onChange={(e) => updateAddress(idx, e.target.value)}
+                  placeholder={idx === 0 ? "Menara Kuala Lumpur..." : `地点 ${idx + 1}...`}
+                  style={{ ...inputBase, width: "100%", fontSize: "13px" }}
+                  onFocus={(e) => { (e.target as HTMLInputElement).style.borderColor = "var(--amber-dim)"; if ((acSuggestions[idx] ?? []).length > 0) setAcOpen((p) => ({ ...p, [idx]: true })); }}
+                  onBlur={(e) => { (e.target as HTMLInputElement).style.borderColor = "var(--border)"; setTimeout(() => setAcOpen((p) => ({ ...p, [idx]: false })), 150); }}
+                  autoComplete="off"
+                />
+                {acOpen[idx] && (acSuggestions[idx] ?? []).length > 0 && (
+                  <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 100, background: "var(--bg-elevated)", border: "1px solid var(--border-bright)", borderRadius: "8px", marginTop: "4px", overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,0.6)" }}>
+                    {acSuggestions[idx].map((s, si) => (
+                      <div key={si}
+                        onMouseDown={() => selectSuggestion(idx, s.description)}
+                        style={{ padding: "10px 14px", cursor: "pointer", borderBottom: si < (acSuggestions[idx].length - 1) ? "1px solid var(--border)" : "none", transition: "background 0.1s" }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-card)")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                      >
+                        <div style={{ fontSize: "13px", color: "var(--text-primary)", marginBottom: "2px" }}>{s.mainText}</div>
+                        {s.secondary && <div style={{ fontSize: "11px", color: "var(--text-dim)" }}>{s.secondary}</div>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               <button type="button" onClick={() => useCurrentLocation(idx)}
                 title="使用当前位置"
-                style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: "3px", padding: "0 10px", color: "var(--text-dim)", cursor: "pointer", fontSize: "13px", transition: "all 0.15s" }}
+                style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0 10px", color: "var(--text-secondary)", cursor: "pointer", fontSize: "13px", transition: "all 0.15s" }}
                 onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--amber)"; (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--amber)"; }}
                 onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--text-dim)"; (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--border)"; }}
               >
@@ -264,7 +319,7 @@ export default function SearchPanel({ onSearch, loading }: SearchPanelProps) {
               </button>
               {locations.length > 1 && (
                 <button type="button" onClick={() => removeLocation(idx)}
-                  style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: "3px", padding: "0 10px", color: "var(--text-dim)", cursor: "pointer", fontSize: "13px", transition: "all 0.15s" }}
+                  style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0 10px", color: "var(--text-secondary)", cursor: "pointer", fontSize: "13px", transition: "all 0.15s" }}
                   onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#b85050"; (e.currentTarget as HTMLButtonElement).style.borderColor = "#b85050"; }}
                   onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--text-dim)"; (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--border)"; }}
                 >✕</button>
@@ -275,7 +330,7 @@ export default function SearchPanel({ onSearch, loading }: SearchPanelProps) {
 
         {locations.length < 5 && (
           <button type="button" onClick={addLocation}
-            style={{ width: "100%", background: "transparent", border: "1px dashed var(--border)", borderRadius: "3px", padding: "6px", color: "var(--text-dim)", fontSize: "13px", letterSpacing: "0.12em", cursor: "pointer", transition: "all 0.15s", fontFamily: "'JetBrains Mono', monospace" }}
+            style={{ width: "100%", background: "transparent", border: "1px dashed var(--border)", borderRadius: "6px", padding: "6px", color: "var(--text-dim)", fontSize: "13px", cursor: "pointer", transition: "all 0.15s", fontFamily: "var(--font-ui)" }}
             onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--amber-dim)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--amber)"; }}
             onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--border)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--text-dim)"; }}
           >+ 添加地点</button>
@@ -285,12 +340,12 @@ export default function SearchPanel({ onSearch, loading }: SearchPanelProps) {
 
         {/* Auto-detect vertical suggestion */}
         {suggestion && suggestion.industry !== industry && (
-          <div style={{ marginTop: "6px", display: "flex", alignItems: "center", gap: "8px", padding: "6px 10px", border: "1px solid rgba(212,160,60,0.25)", borderRadius: "3px", background: "rgba(212,160,60,0.04)", animation: "fadeSlideIn 0.2s ease" }}>
-            <span style={{ fontSize: "13px", color: "var(--text-dim)" }}>检测到 <strong style={{ color: "var(--amber)" }}>{suggestion.label}</strong> 区域</span>
+          <div style={{ marginTop: "6px", display: "flex", alignItems: "center", gap: "8px", padding: "8px 12px", border: "1px solid var(--amber-dim)", borderRadius: "8px", background: "var(--amber-glow)", animation: "fadeSlideIn 0.2s ease" }}>
+            <span style={{ fontSize: "13px", color: "var(--text-secondary)" }}>检测到 <strong style={{ color: "var(--amber)" }}>{suggestion.label}</strong> 区域</span>
             <button
               type="button"
               onClick={() => { setIndustry(suggestion.industry); setSuggestion(null); }}
-              style={{ fontSize: "15px", padding: "2px 10px", border: "1px solid var(--amber)", borderRadius: "2px", background: "rgba(212,160,60,0.12)", color: "var(--amber)", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.06em", flexShrink: 0 }}
+              style={{ fontSize: "13px", padding: "4px 12px", border: "1px solid var(--amber)", borderRadius: "500px", background: "var(--amber-glow)", color: "var(--amber)", cursor: "pointer", fontFamily: "var(--font-ui)", flexShrink: 0, fontWeight: 600 }}
             >切换行业</button>
           </div>
         )}
@@ -302,7 +357,7 @@ export default function SearchPanel({ onSearch, loading }: SearchPanelProps) {
             {history.map((h) => (
               <button key={h.timestamp} type="button"
                 onClick={() => setLocations([{ address: h.address, resolved: { address: h.address, lat: h.lat, lng: h.lng } }])}
-                style={{ display: "block", width: "100%", textAlign: "left", background: "transparent", border: "none", padding: "2px 0", color: "var(--text-dim)", fontSize: "13px", cursor: "pointer", letterSpacing: "0.02em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", transition: "color 0.15s", fontFamily: "'JetBrains Mono', monospace" }}
+                style={{ display: "block", width: "100%", textAlign: "left", background: "transparent", border: "none", padding: "3px 0", color: "var(--text-secondary)", fontSize: "13px", cursor: "pointer", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", transition: "color 0.15s", fontFamily: "var(--font-ui)" }}
                 onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--amber)")}
                 onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-dim)")}
               >↺ {h.address}</button>
@@ -322,13 +377,13 @@ export default function SearchPanel({ onSearch, loading }: SearchPanelProps) {
             return (
               <button key={ind.value} type="button" onClick={() => setIndustry(ind.value)}
                 style={{
-                  background: active ? "rgba(212,160,60,0.1)" : "transparent",
+                  background: active ? "var(--amber-glow)" : "var(--bg-elevated)",
                   border: `1px solid ${active ? "var(--amber)" : "var(--border)"}`,
-                  borderRadius: "3px", padding: "7px 10px",
+                  borderRadius: "8px", padding: "7px 10px",
                   color: active ? "var(--amber)" : "var(--text-secondary)",
-                  fontSize: "15px", letterSpacing: "0.04em", cursor: "pointer",
+                  fontSize: "14px", cursor: "pointer",
                   transition: "all 0.15s", display: "flex", alignItems: "center", gap: "6px",
-                  fontFamily: "'JetBrains Mono', monospace",
+                  fontFamily: "var(--font-ui)",
                 }}
               >
                 <span style={{ fontSize: "13px", opacity: 0.7 }}>{ind.icon}</span>
@@ -366,12 +421,12 @@ export default function SearchPanel({ onSearch, loading }: SearchPanelProps) {
             return (
               <button key={r.value} type="button" onClick={() => { setRadius(r.value); setUseCustom(false); }}
                 style={{
-                  background: active ? "rgba(212,160,60,0.12)" : "transparent",
+                  background: active ? "var(--amber-glow)" : "var(--bg-elevated)",
                   border: `1px solid ${active ? "var(--amber)" : "var(--border)"}`,
-                  borderRadius: "3px", padding: "7px 2px",
+                  borderRadius: "8px", padding: "7px 2px",
                   color: active ? "var(--amber)" : "var(--text-secondary)",
                   fontSize: "13px", cursor: "pointer", transition: "all 0.15s",
-                  fontFamily: "'JetBrains Mono', monospace",
+                  fontFamily: "var(--font-ui)",
                 }}
               >{r.label}</button>
             );
@@ -382,7 +437,7 @@ export default function SearchPanel({ onSearch, loading }: SearchPanelProps) {
             onClick={() => setUseCustom(!useCustom)}
             style={{
               width: "16px", height: "16px", border: `1px solid ${useCustom ? "var(--amber)" : "var(--border)"}`,
-              borderRadius: "2px", background: useCustom ? "rgba(212,160,60,0.2)" : "transparent",
+              borderRadius: "4px", background: useCustom ? "var(--amber-dim)" : "transparent",
               display: "flex", alignItems: "center", justifyContent: "center",
               fontSize: "15px", color: "var(--amber)", transition: "all 0.15s", cursor: "pointer", flexShrink: 0,
             }}
@@ -406,19 +461,24 @@ export default function SearchPanel({ onSearch, loading }: SearchPanelProps) {
         <button type="submit" disabled={loading}
           style={{
             width: "100%",
-            background: loading ? "rgba(212,160,60,0.05)" : "linear-gradient(135deg, rgba(212,160,60,0.15), rgba(212,160,60,0.08))",
-            border: `1px solid ${loading ? "var(--border)" : "var(--amber)"}`,
-            borderRadius: "3px", padding: "14px",
-            color: loading ? "var(--text-dim)" : "var(--amber)",
-            fontSize: "13px", letterSpacing: "0.22em", textTransform: "uppercase",
-            cursor: loading ? "not-allowed" : "pointer", transition: "all 0.2s",
-            fontFamily: "'JetBrains Mono', monospace", fontWeight: 500,
+            background: loading ? "var(--bg-elevated)" : "var(--amber)",
+            border: "none",
+            borderRadius: "500px",
+            padding: "14px",
+            color: loading ? "var(--text-dim)" : "#000000",
+            fontSize: "14px",
+            fontWeight: 700,
+            cursor: loading ? "not-allowed" : "pointer",
+            transition: "all 0.15s",
+            fontFamily: "var(--font-ui)",
             display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
           }}
+          onMouseEnter={(e) => { if (!loading) (e.currentTarget as HTMLButtonElement).style.transform = "scale(1.02)"; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = "scale(1)"; }}
         >
           {loading
             ? <><span style={{ animation: "spinnerRotate 1s linear infinite", display: "inline-block" }}>◌</span> 扫描中...</>
-            : <>⬡ 扫描 B2B 线索</>}
+            : <>扫描 B2B 线索</>}
         </button>
       </div>
     </form>

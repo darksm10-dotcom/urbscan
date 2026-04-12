@@ -373,10 +373,13 @@ function StaticMapImage({ lat, lng, name }: { lat: number; lng: number; name: st
 
 function EmptyState({ message, sub }: { message: string; sub?: string }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "300px", gap: "12px" }}>
-      <div style={{ fontSize: "40px", color: "var(--text-dim)", fontFamily: "'Syne', sans-serif", fontWeight: 800 }}>◈</div>
-      <div style={{ fontSize: "13px", color: "var(--text-secondary)", letterSpacing: "0.15em", textTransform: "uppercase" }}>{message}</div>
-      {sub && <div style={{ fontSize: "15px", color: "var(--text-dim)" }}>{sub}</div>}
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "360px", gap: "10px" }}>
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" style={{ opacity: 0.2 }}>
+        <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="1.5"/>
+        <path d="M21 21l-4.35-4.35" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+      </svg>
+      <div style={{ fontSize: "16px", fontWeight: 600, color: "var(--text-secondary)" }}>{message}</div>
+      {sub && <div style={{ fontSize: "13px", color: "var(--text-dim)" }}>{sub}</div>}
     </div>
   );
 }
@@ -437,6 +440,9 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
   const [contactLogs, setContactLogs] = useState<Record<string, ContactLog[]>>({});
   const [senderName, setSenderName] = useState<string>(() => (typeof window !== "undefined" ? localStorage.getItem("urbscan_sender_name") ?? "" : ""));
   const [senderCompany, setSenderCompany] = useState<string>(() => (typeof window !== "undefined" ? localStorage.getItem("urbscan_sender_company") ?? "" : ""));
+  const [statusFilter, setStatusFilter] = useState<"all" | LeadStatus>("all");
+  const [bulkMode, setBulkMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   function handleSenderChange(name: string, company: string) {
     setSenderName(name);
@@ -455,9 +461,14 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
 
   const sorted = useMemo(() => {
     const active = pipeline;
-    let list = showUnvisited
-      ? buildingsWithScore.filter((b) => !active[b.id] || active[b.id].status === "new")
-      : buildingsWithScore;
+    let list: typeof buildingsWithScore;
+    if (statusFilter !== "all") {
+      list = buildingsWithScore.filter((b) => (active[b.id]?.status ?? "new") === statusFilter);
+    } else if (showUnvisited) {
+      list = buildingsWithScore.filter((b) => !active[b.id] || active[b.id].status === "new");
+    } else {
+      list = buildingsWithScore;
+    }
     switch (sortMode) {
       case "score":    return [...list].sort((a, b) => b.score - a.score);
       case "distance": return [...list].sort((a, b) => a.distance - b.distance);
@@ -465,7 +476,7 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
       case "route":    return primaryCenter ? optimizeRoute([...list], primaryCenter) : list;
       default:         return list;
     }
-  }, [buildingsWithScore, sortMode, pipeline, showUnvisited, primaryCenter]);
+  }, [buildingsWithScore, sortMode, pipeline, showUnvisited, primaryCenter, statusFilter]);
 
   const routeTotal = useMemo(() => {
     if (sortMode !== "route" || !primaryCenter || sorted.length === 0) return null;
@@ -549,10 +560,38 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
   }, [buildings, hunterData, batchRunning]);
 
   function toggleRow(id: string) {
+    if (bulkMode) { toggleSelect(id); return; }
     const opening = expandedId !== id;
     setExpandedId(opening ? id : null);
     onSelectId(id === selectedId ? null : id);
     if (opening) setContactLogs((prev) => ({ ...prev, [id]: getContactsForBuilding(id) }));
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === sorted.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(sorted.map((b) => b.id)));
+    }
+  }
+
+  function bulkSetStatus(status: LeadStatus) {
+    sorted.filter((b) => selectedIds.has(b.id)).forEach((b) => setLeadStatus(b.id, status));
+    setPipeline(getPipelineData());
+    setSelectedIds(new Set());
+  }
+
+  function exitBulk() {
+    setBulkMode(false);
+    setSelectedIds(new Set());
   }
 
   if (loading) {
@@ -577,13 +616,13 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
 
   if (!searched) return (
     <div style={{ border: "1px solid var(--border)", borderRadius: "3px", background: "var(--bg-card)", animation: "fadeSlideIn 0.4s ease" }}>
-      <EmptyState message="等待扫描指令" sub="在左侧选择行业和地点，开始搜索 B2B 线索" />
+      <EmptyState message="Find your next leads" sub="Select an industry and enter a location to start scanning" />
     </div>
   );
 
   if (buildings.length === 0) return (
     <div style={{ border: "1px solid var(--border)", borderRadius: "3px", background: "var(--bg-card)", animation: "fadeSlideIn 0.3s ease" }}>
-      <EmptyState message="无结果" sub="尝试扩大范围或切换行业关键词" />
+      <EmptyState message="No results found" sub="Try expanding the radius or switching keywords" />
     </div>
   );
 
@@ -614,6 +653,44 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
         ))}
       </div>
 
+      {/* Status Filter Bar */}
+      <div style={{ display: "flex", alignItems: "center", gap: "4px", marginBottom: "6px", flexWrap: "wrap" }}>
+        <span style={{ fontSize: "11px", color: "var(--text-dim)", letterSpacing: "0.15em", marginRight: "2px" }}>筛选</span>
+        {([
+          { key: "all",       label: "全部" },
+          { key: "new",       label: "新线索" },
+          { key: "contacted", label: "已联系" },
+          { key: "following", label: "跟进中" },
+          { key: "won",       label: "成交" },
+          { key: "lost",      label: "放弃" },
+        ] as { key: "all" | LeadStatus; label: string }[]).map(({ key, label: lbl }) => {
+          const active = statusFilter === key;
+          const meta = key !== "all" ? STATUS_META[key] : null;
+          return (
+            <button key={key} onClick={() => { setStatusFilter(key); if (key !== "all") setShowUnvisited(false); }}
+              style={{ background: active ? (meta ? meta.bg : "rgba(212,160,60,0.1)") : "transparent", border: `1px solid ${active ? (meta?.color ?? "var(--amber)") : "var(--border)"}`, borderRadius: "3px", padding: "2px 9px", color: active ? (meta?.color ?? "var(--amber)") : "var(--text-secondary)", fontSize: "11px", letterSpacing: "0.08em", cursor: "pointer", transition: "all 0.15s", fontFamily: "'JetBrains Mono', monospace" }}
+            >{lbl}{key !== "all" && buildings.filter((b) => (pipeline[b.id]?.status ?? "new") === key).length > 0 ? ` (${buildings.filter((b) => (pipeline[b.id]?.status ?? "new") === key).length})` : ""}</button>
+          );
+        })}
+      </div>
+
+      {/* Bulk Action Bar */}
+      {bulkMode && (
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 12px", marginBottom: "6px", border: "1px solid var(--amber-dim)", borderRadius: "3px", background: "rgba(212,160,60,0.06)", animation: "fadeSlideIn 0.2s ease", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "13px", color: "var(--amber)", letterSpacing: "0.1em" }}>
+            已选 {selectedIds.size} 条
+          </span>
+          <span style={{ fontSize: "11px", color: "var(--text-dim)", marginRight: "4px" }}>批量改状态:</span>
+          {(Object.keys(STATUS_META) as LeadStatus[]).map((s) => (
+            <button key={s} onClick={() => bulkSetStatus(s)} disabled={selectedIds.size === 0}
+              style={{ fontSize: "11px", padding: "2px 8px", borderRadius: "2px", border: `1px solid ${STATUS_META[s].color}`, background: STATUS_META[s].bg, color: STATUS_META[s].color, cursor: selectedIds.size === 0 ? "not-allowed" : "pointer", opacity: selectedIds.size === 0 ? 0.4 : 1, fontFamily: "'JetBrains Mono', monospace" }}
+            >{STATUS_META[s].label}</button>
+          ))}
+          <button onClick={() => setSelectedIds(new Set(sorted.map((b) => b.id)))} style={{ fontSize: "11px", padding: "2px 8px", borderRadius: "2px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-secondary)", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}>全选</button>
+          <button onClick={exitBulk} style={{ marginLeft: "auto", fontSize: "11px", padding: "2px 8px", borderRadius: "2px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-dim)", cursor: "pointer" }}>退出批量</button>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px", gap: "8px", flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "4px", flexWrap: "wrap" }}>
@@ -629,11 +706,14 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
             >{lbl}</button>
           ))}
           <button onClick={() => setShowUnvisited(!showUnvisited)}
-            style={{ background: showUnvisited ? "rgba(0,212,168,0.08)" : "transparent", border: `1px solid ${showUnvisited ? "var(--cyan)" : "var(--border)"}`, borderRadius: "3px", padding: "3px 10px", color: showUnvisited ? "var(--cyan)" : "var(--text-secondary)", fontSize: "13px", letterSpacing: "0.08em", cursor: "pointer", transition: "all 0.15s", fontFamily: "'JetBrains Mono', monospace" }}
-          >{showUnvisited ? "仅新线索" : "全部线索"}</button>
+            style={{ background: showUnvisited && statusFilter === "all" ? "rgba(0,212,168,0.08)" : "transparent", border: `1px solid ${showUnvisited && statusFilter === "all" ? "var(--cyan)" : "var(--border)"}`, borderRadius: "3px", padding: "3px 10px", color: showUnvisited && statusFilter === "all" ? "var(--cyan)" : "var(--text-secondary)", fontSize: "13px", letterSpacing: "0.08em", cursor: "pointer", transition: "all 0.15s", fontFamily: "'JetBrains Mono', monospace" }}
+          >{showUnvisited && statusFilter === "all" ? "仅新线索" : "全部线索"}</button>
           <button onClick={() => setShowWeights(!showWeights)}
             style={{ background: showWeights ? "rgba(212,160,60,0.08)" : "transparent", border: `1px solid ${showWeights ? "var(--border-bright)" : "var(--border)"}`, borderRadius: "3px", padding: "3px 10px", color: showWeights ? "var(--amber-dim)" : "var(--text-dim)", fontSize: "13px", letterSpacing: "0.08em", cursor: "pointer", transition: "all 0.15s", fontFamily: "'JetBrains Mono', monospace" }}
           >权重</button>
+          <button onClick={() => { setBulkMode(!bulkMode); if (bulkMode) setSelectedIds(new Set()); }}
+            style={{ background: bulkMode ? "rgba(212,160,60,0.1)" : "transparent", border: `1px solid ${bulkMode ? "var(--amber)" : "var(--border)"}`, borderRadius: "3px", padding: "3px 10px", color: bulkMode ? "var(--amber)" : "var(--text-secondary)", fontSize: "13px", letterSpacing: "0.08em", cursor: "pointer", transition: "all 0.15s", fontFamily: "'JetBrains Mono', monospace" }}
+          >批量</button>
         </div>
         <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
           {routeTotal !== null && (
@@ -682,12 +762,16 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
       )}
 
       {/* Column headers */}
-      <div style={{ display: "grid", gridTemplateColumns: "36px 1fr 80px 60px 60px 70px", gap: "0 8px", padding: "6px 14px", borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)", background: "rgba(212,160,60,0.03)", marginBottom: "2px" }}>
-        {["#", "企业名称 / 地址", "评分", "评级", "距离 ↑", "状态"].map((h) => (
+      <div style={{ display: "grid", gridTemplateColumns: "36px minmax(0,1fr) 80px 60px 60px 70px", gap: "0 8px", padding: "6px 14px", borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)", background: "rgba(212,160,60,0.03)", marginBottom: "2px" }}>
+        {(["#", "企业名称 / 地址", "评分", "评级", "距离 ↑", "状态"] as string[]).map((h, hi) => (
           <div key={h}
-            onClick={h === "距离 ↑" ? () => setSortMode("distance") : undefined}
-            style={{ fontSize: "15px", color: h === "距离 ↑" && sortMode === "distance" ? "var(--amber)" : "var(--text-dim)", letterSpacing: "0.18em", textTransform: "uppercase", cursor: h === "距离 ↑" ? "pointer" : "default" }}
-          >{h}</div>
+            onClick={h === "距离 ↑" ? () => setSortMode("distance") : (h === "#" && bulkMode ? toggleSelectAll : undefined)}
+            style={{ fontSize: "15px", color: h === "距离 ↑" && sortMode === "distance" ? "var(--amber)" : "var(--text-dim)", letterSpacing: "0.18em", textTransform: "uppercase", cursor: (h === "距离 ↑" || (h === "#" && bulkMode)) ? "pointer" : "default", display: hi === 0 && bulkMode ? "flex" : undefined, alignItems: hi === 0 && bulkMode ? "center" : undefined }}
+          >
+            {h === "#" && bulkMode ? (
+              <input type="checkbox" checked={selectedIds.size === sorted.length && sorted.length > 0} onChange={toggleSelectAll} style={{ width: "14px", height: "14px", accentColor: "var(--amber)", cursor: "pointer" }} />
+            ) : h}
+          </div>
         ))}
       </div>
 
@@ -703,18 +787,20 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
             <div key={b.id} style={{ animation: `rowReveal 0.3s ease ${Math.min(i * 0.03, 0.4)}s both`, opacity: isInactive ? 0.45 : 1 }}>
               <div
                 onClick={() => toggleRow(b.id)}
-                style={{ display: "grid", gridTemplateColumns: "36px 1fr 80px 60px 60px 70px", gap: "0 8px", padding: "10px 14px", borderBottom: isExpanded ? "none" : "1px solid rgba(212,160,60,0.06)", background: isSelected ? "rgba(212,160,60,0.07)" : i % 2 === 0 ? "transparent" : "rgba(212,160,60,0.01)", cursor: "pointer", transition: "background 0.15s, box-shadow 0.2s", borderLeft: `2px solid ${isSelected ? "var(--amber)" : b.score >= 70 ? "rgba(122,184,106,0.5)" : STATUS_META[status].color === "var(--text-dim)" ? "transparent" : STATUS_META[status].color + "55"}` }}
+                style={{ display: "grid", gridTemplateColumns: "36px minmax(0,1fr) 80px 60px 60px 70px", gap: "0 8px", padding: "10px 14px", overflow: "hidden", borderBottom: isExpanded ? "none" : "1px solid rgba(212,160,60,0.06)", background: isSelected ? "rgba(212,160,60,0.07)" : i % 2 === 0 ? "transparent" : "rgba(212,160,60,0.01)", cursor: "pointer", transition: "background 0.15s, box-shadow 0.2s", borderLeft: `2px solid ${isSelected ? "var(--amber)" : b.score >= 70 ? "rgba(122,184,106,0.5)" : STATUS_META[status].color === "var(--text-dim)" ? "transparent" : STATUS_META[status].color + "55"}` }}
                 onMouseEnter={(e) => { if (!isSelected) { (e.currentTarget as HTMLDivElement).style.background = "rgba(212,160,60,0.055)"; (e.currentTarget as HTMLDivElement).style.boxShadow = "inset 0 0 40px rgba(212,160,60,0.04)"; } }}
                 onMouseLeave={(e) => { if (!isSelected) { (e.currentTarget as HTMLDivElement).style.background = i % 2 === 0 ? "transparent" : "rgba(212,160,60,0.01)"; (e.currentTarget as HTMLDivElement).style.boxShadow = "none"; } }}
               >
-                <div style={{ fontSize: "15px", color: "var(--text-dim)", alignSelf: "center", fontWeight: 300 }}>
-                  {sortMode === "route" ? <span style={{ color: "var(--amber)", fontSize: "13px", fontWeight: 600 }}>{i + 1}</span> : String(i + 1).padStart(2, "0")}
+                <div style={{ fontSize: "15px", color: "var(--text-dim)", alignSelf: "center", fontWeight: 300, display: "flex", alignItems: "center" }}>
+                  {bulkMode
+                    ? <input type="checkbox" checked={selectedIds.has(b.id)} onChange={() => toggleSelect(b.id)} onClick={(e) => e.stopPropagation()} style={{ width: "14px", height: "14px", accentColor: "var(--amber)", cursor: "pointer" }} />
+                    : sortMode === "route" ? <span style={{ color: "var(--amber)", fontSize: "13px", fontWeight: 600 }}>{i + 1}</span> : String(i + 1).padStart(2, "0")}
                 </div>
-                <div style={{ minWidth: 0, alignSelf: "center" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "2px" }}>
+                <div style={{ minWidth: 0, alignSelf: "center", overflow: "hidden" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "2px", minWidth: 0 }}>
                     {b.type === "office" && <span title="写字楼" style={{ fontSize: "14px", flexShrink: 0 }}>🏢</span>}
                     {b.type === "residential" && <span title="住宅" style={{ fontSize: "14px", flexShrink: 0 }}>🏠</span>}
-                    <span style={{ fontSize: "13px", color: "var(--text-primary)", fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>{b.name}</span>
+                    <span style={{ fontSize: "13px", color: "var(--text-primary)", fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, flex: 1 }}>{b.name}</span>
                   </div>
                   <div style={{ fontSize: "13px", color: "var(--text-dim)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{b.address}</div>
                 </div>

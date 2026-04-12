@@ -1,15 +1,88 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { ContactLog } from "@/types";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { ContactLog, LeadStatus, PipelineEntry } from "@/types";
 import {
   getContacts,
+  addContact,
   updateContact,
   deleteContact,
   getOverdueFollowUps,
   googleCalendarLink,
   onContactsChanged,
 } from "@/lib/contacts";
+import { getPipelineData, setLeadStatus } from "@/lib/pipeline";
+
+const PIPELINE_META: Record<LeadStatus, { label: string; color: string; bg: string }> = {
+  new:       { label: "新线索", color: "var(--text-dim)",    bg: "transparent" },
+  contacted: { label: "已联系", color: "var(--amber)",       bg: "rgba(212,160,60,0.08)" },
+  following: { label: "跟进中", color: "var(--cyan)",        bg: "rgba(0,212,168,0.06)" },
+  won:       { label: "成交",   color: "#7ab86a",            bg: "rgba(90,138,74,0.08)" },
+  lost:      { label: "放弃",   color: "#c07070",            bg: "rgba(180,60,60,0.08)" },
+};
+
+function exportContactsCSV(contacts: ContactLog[]) {
+  const header = "Company,Address,Phone,Method,Contacted At,Note,Follow-up Date,Follow-up Done";
+  const rows = contacts.map((c) => [
+    `"${c.buildingName.replace(/"/g, '""')}"`,
+    `"${(c.buildingAddress ?? "").replace(/"/g, '""')}"`,
+    `"${c.buildingPhone ?? ""}"`,
+    c.method,
+    c.contactedAt,
+    `"${(c.note ?? "").replace(/"/g, '""')}"`,
+    c.followUpAt ?? "",
+    c.followUpDone ? "Yes" : "No",
+  ].join(","));
+  const blob = new Blob(["\uFEFF" + [header, ...rows].join("\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `urbscan-contacts-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function parseContactsCSV(text: string): number {
+  const lines = text.replace(/\r\n/g, "\n").split("\n").filter(Boolean);
+  if (lines.length < 2) return 0;
+  // Skip header row
+  const dataRows = lines.slice(1);
+  let imported = 0;
+  for (const line of dataRows) {
+    // Simple CSV parse (handles quoted fields with commas inside)
+    const fields: string[] = [];
+    let cur = "";
+    let inQuote = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuote && line[i + 1] === '"') { cur += '"'; i++; }
+        else inQuote = !inQuote;
+      } else if (ch === "," && !inQuote) {
+        fields.push(cur); cur = "";
+      } else {
+        cur += ch;
+      }
+    }
+    fields.push(cur);
+    const [company, address, phone, method, contactedAt, note, followUpAt, followUpDone] = fields;
+    if (!company?.trim()) continue;
+    const validMethods = ["whatsapp", "call", "email", "visit", "other"];
+    addContact({
+      buildingId: `import-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      buildingName: company.trim(),
+      buildingAddress: address?.trim() || undefined,
+      buildingPhone: phone?.trim() || undefined,
+      method: (validMethods.includes(method?.trim()) ? method.trim() : "other") as ContactLog["method"],
+      note: note?.trim() ?? "",
+      contactedAt: contactedAt?.trim() || new Date().toISOString(),
+      followUpAt: followUpAt?.trim() || undefined,
+      followUpDone: followUpDone?.trim()?.toLowerCase() === "yes",
+    });
+    imported++;
+  }
+  return imported;
+}
 
 const METHOD_META: Record<ContactLog["method"], { icon: string; label: string; color: string }> = {
   whatsapp: { icon: "💬", label: "WhatsApp", color: "#25d366" },
@@ -19,7 +92,7 @@ const METHOD_META: Record<ContactLog["method"], { icon: string; label: string; c
   other:    { icon: "◈",  label: "Other",     color: "var(--text-secondary)" },
 };
 
-type FilterMode = "all" | "followup" | "overdue" | "done";
+type FilterMode = "all" | LeadStatus;
 type SortCol = "name" | "date" | "followup" | "method";
 
 interface EditForm {
@@ -92,8 +165,28 @@ export default function ContactsPanel() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<EditForm | null>(null);
   const [notifStatus, setNotifStatus] = useState<NotificationPermission | "unsupported">("default");
+  const [pipeline, setPipeline] = useState<Record<string, PipelineEntry>>({});
+  const [importMsg, setImportMsg] = useState<string | null>(null);
+  const importRef = useRef<HTMLInputElement>(null);
 
-  const reload = useCallback(() => setContacts(getContacts()), []);
+  function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string;
+      const count = parseContactsCSV(text);
+      setImportMsg(`已导入 ${count} 条联系记录`);
+      setTimeout(() => setImportMsg(null), 3000);
+    };
+    reader.readAsText(file, "utf-8");
+    e.target.value = "";
+  }
+
+  const reload = useCallback(() => {
+    setContacts(getContacts());
+    setPipeline(getPipelineData());
+  }, []);
 
   useEffect(() => {
     reload();
@@ -101,6 +194,11 @@ export default function ContactsPanel() {
     else setNotifStatus(Notification.permission);
     return onContactsChanged(reload);
   }, [reload]);
+
+  function changeStatus(buildingId: string, status: LeadStatus) {
+    setLeadStatus(buildingId, status);
+    setPipeline(getPipelineData());
+  }
 
   useEffect(() => {
     if (typeof window === "undefined" || Notification.permission !== "granted") return;
@@ -140,10 +238,8 @@ export default function ContactsPanel() {
       followUpAt: editForm.followUpAt || undefined,
       followUpDone: editForm.followUpAt ? editForm.followUpDone : false,
     });
-    const hasFollowUp = !!(editForm.followUpAt && !editForm.followUpDone);
     setExpandedId(null);
     setEditForm(null);
-    if (hasFollowUp) setFilter("followup"); // auto-switch to Follow-up tab
   }
 
   function handleDelete(id: string) {
@@ -159,20 +255,23 @@ export default function ContactsPanel() {
 
   const today = new Date().toISOString().slice(0, 10);
 
-  const stats = useMemo(() => ({
-    total: contacts.length,
-    followup: contacts.filter((c) => c.followUpAt && !c.followUpDone).length,
-    overdue: contacts.filter((c) => !c.followUpDone && c.followUpAt && c.followUpAt < today).length,
-    done: contacts.filter((c) => c.followUpDone).length,
-  }), [contacts, today]);
+  const stats = useMemo(() => {
+    const byStatus = (s: LeadStatus) => contacts.filter((c) => (pipeline[c.buildingId]?.status ?? "new") === s).length;
+    return {
+      total:     contacts.length,
+      new:       byStatus("new"),
+      contacted: byStatus("contacted"),
+      following: byStatus("following"),
+      won:       byStatus("won"),
+      lost:      byStatus("lost"),
+      overdue:   contacts.filter((c) => !c.followUpDone && c.followUpAt && c.followUpAt < today).length,
+    };
+  }, [contacts, pipeline, today]);
 
   const filtered = useMemo(() => {
-    let list = contacts.filter((c) => {
-      if (filter === "followup") return !!(c.followUpAt && !c.followUpDone);
-      if (filter === "overdue")  return !c.followUpDone && c.followUpAt && c.followUpAt < today;
-      if (filter === "done")     return c.followUpDone;
-      return true;
-    });
+    let list = filter === "all"
+      ? contacts
+      : contacts.filter((c) => (pipeline[c.buildingId]?.status ?? "new") === filter);
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter((c) =>
@@ -189,7 +288,7 @@ export default function ContactsPanel() {
       if (sortCol === "method")  cmp = a.method.localeCompare(b.method);
       return sortAsc ? cmp : -cmp;
     });
-  }, [contacts, filter, search, sortCol, sortAsc, today]);
+  }, [contacts, pipeline, filter, search, sortCol, sortAsc, today]);
 
   function SortIcon({ col }: { col: SortCol }) {
     if (sortCol !== col) return <span style={{ opacity: 0.3, marginLeft: "4px" }}>↕</span>;
@@ -209,13 +308,6 @@ export default function ContactsPanel() {
     background: "var(--bg-elevated)",
   };
 
-  const FILTERS: { mode: FilterMode; label: (s: typeof stats) => string; urgent?: boolean }[] = [
-    { mode: "all",      label: (s) => `All (${s.total})` },
-    { mode: "followup", label: (s) => `Follow-up (${s.followup})` },
-    { mode: "overdue",  label: (s) => `Overdue (${s.overdue})`, urgent: true },
-    { mode: "done",     label: (s) => `Done (${s.done})` },
-  ];
-
   return (
     <div style={{ animation: "fadeSlideIn 0.3s ease" }}>
 
@@ -230,23 +322,29 @@ export default function ContactsPanel() {
       )}
 
       {/* Stats row */}
-      <div style={{ display: "flex", gap: "12px", marginBottom: "20px" }}>
-        <StatCard label="Total Contacts" value={stats.total}   color="var(--amber)" />
-        <StatCard label="Follow-ups"     value={stats.followup} color="var(--text-primary)" />
-        <StatCard label="Overdue"        value={stats.overdue}  color={stats.overdue > 0 ? "#e05555" : "var(--text-dim)"} />
-        <StatCard label="Done"           value={stats.done}     color="var(--green-bright)" />
+      <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap" }}>
+        <StatCard label="总计"   value={stats.total}     color="var(--amber)" />
+        <StatCard label="跟进中" value={stats.following} color="var(--cyan)" />
+        <StatCard label="成交"   value={stats.won}       color="#7ab86a" />
+        <StatCard label="逾期"   value={stats.overdue}   color={stats.overdue > 0 ? "#e05555" : "var(--text-dim)"} />
       </div>
 
-      {/* Filter tabs + search */}
+      {/* Pipeline status tabs + search */}
       <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px", flexWrap: "wrap" }}>
-        <div style={{ display: "flex", gap: "4px" }}>
-          {FILTERS.map(({ mode, label, urgent }) => {
+        <div style={{ display: "flex", gap: "2px", flexWrap: "wrap" }}>
+          {([
+            { mode: "all",       label: `全部 (${stats.total})`,          color: "var(--amber)",  bg: "var(--amber-glow)" },
+            { mode: "new",       label: `新线索 (${stats.new})`,          color: "var(--text-dim)", bg: "rgba(255,255,255,0.04)" },
+            { mode: "contacted", label: `已联系 (${stats.contacted})`,    color: "var(--amber)",  bg: "rgba(212,160,60,0.08)" },
+            { mode: "following", label: `跟进中 (${stats.following})`,    color: "var(--cyan)",   bg: "rgba(0,212,168,0.06)" },
+            { mode: "won",       label: `成交 (${stats.won})`,            color: "#7ab86a",       bg: "rgba(90,138,74,0.08)" },
+            { mode: "lost",      label: `放弃 (${stats.lost})`,           color: "#c07070",       bg: "rgba(180,60,60,0.08)" },
+          ] as { mode: FilterMode; label: string; color: string; bg: string }[]).map(({ mode, label, color, bg }) => {
             const isActive = filter === mode;
-            const color = urgent && stats.overdue > 0 ? "#e05555" : "var(--amber)";
             return (
               <button key={mode} onClick={() => setFilter(mode)}
-                style={{ fontSize: "12px", padding: "5px 14px", borderRadius: "6px", border: `1px solid ${isActive ? color : "var(--border)"}`, background: isActive ? (urgent && stats.overdue > 0 ? "rgba(224,85,85,0.1)" : "var(--amber-glow)") : "transparent", color: isActive ? color : "var(--text-secondary)", cursor: "pointer", transition: "all 0.15s" }}
-              >{label(stats)}</button>
+                style={{ fontSize: "12px", padding: "5px 14px", borderRadius: "6px", border: `1px solid ${isActive ? color : "var(--border)"}`, background: isActive ? bg : "transparent", color: isActive ? color : "var(--text-secondary)", cursor: "pointer", transition: "all 0.15s", fontWeight: isActive ? 600 : 400 }}
+              >{label}</button>
             );
           })}
         </div>
@@ -256,6 +354,22 @@ export default function ContactsPanel() {
           placeholder="Search company, address, notes..."
           style={{ ...inputStyle, flex: 1, minWidth: "180px", padding: "6px 12px" }}
         />
+        <div style={{ display: "flex", gap: "6px", alignItems: "center", flexShrink: 0 }}>
+          <button onClick={() => exportContactsCSV(filtered)}
+            title="导出当前筛选结果为 CSV"
+            style={{ fontSize: "12px", padding: "5px 12px", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-secondary)", cursor: "pointer", transition: "all 0.15s", whiteSpace: "nowrap" }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--amber)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--amber)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--border)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--text-secondary)"; }}
+          >↓ 导出 CSV</button>
+          <button onClick={() => importRef.current?.click()}
+            title="从 CSV 导入联系记录"
+            style={{ fontSize: "12px", padding: "5px 12px", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-secondary)", cursor: "pointer", transition: "all 0.15s", whiteSpace: "nowrap" }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--cyan)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--cyan)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--border)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--text-secondary)"; }}
+          >↑ 导入 CSV</button>
+          <input ref={importRef} type="file" accept=".csv,text/csv" onChange={handleImport} style={{ display: "none" }} />
+          {importMsg && <span style={{ fontSize: "12px", color: "var(--green-bright)", animation: "fadeSlideIn 0.2s ease" }}>{importMsg}</span>}
+        </div>
       </div>
 
       {/* Master list table */}
@@ -288,6 +402,8 @@ export default function ContactsPanel() {
                 const meta = METHOD_META[c.method];
                 const isExpanded = expandedId === c.id;
                 const isOverdue = !c.followUpDone && c.followUpAt && c.followUpAt < today;
+                const leadStatus: LeadStatus = pipeline[c.buildingId]?.status ?? "new";
+                const pMeta = PIPELINE_META[leadStatus];
 
                 return (
                   <React.Fragment key={c.id}>
@@ -307,7 +423,12 @@ export default function ContactsPanel() {
                         {String(i + 1).padStart(2, "0")}
                       </td>
                       <td style={{ padding: "12px 14px", maxWidth: "200px" }}>
-                        <div style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.buildingName}</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "1px" }}>
+                          <div style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.buildingName}</div>
+                          {leadStatus !== "new" && (
+                            <span style={{ fontSize: "10px", color: pMeta.color, background: pMeta.bg, border: `1px solid ${pMeta.color}44`, borderRadius: "3px", padding: "1px 5px", whiteSpace: "nowrap", flexShrink: 0 }}>{pMeta.label}</span>
+                          )}
+                        </div>
                         {c.buildingAddress && (
                           <div style={{ fontSize: "11px", color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: "2px" }}>{c.buildingAddress}</div>
                         )}
@@ -343,6 +464,23 @@ export default function ContactsPanel() {
                         <td style={{ borderLeft: `3px solid ${meta.color}` }} />
                         <td colSpan={6} style={{ padding: "16px 18px" }} onClick={(e) => e.stopPropagation()}>
                           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "12px" }}>
+
+                            {/* Lead Status */}
+                            <div style={{ gridColumn: "1 / -1" }}>
+                              <label style={{ fontSize: "11px", color: "var(--text-secondary)", display: "block", marginBottom: "6px", fontWeight: 600 }}>LEAD STATUS</label>
+                              <div style={{ display: "flex", gap: "5px", flexWrap: "wrap" }}>
+                                {(Object.keys(PIPELINE_META) as LeadStatus[]).map((s) => {
+                                  const pm = PIPELINE_META[s];
+                                  const isActive = leadStatus === s;
+                                  return (
+                                    <button key={s}
+                                      onClick={(e) => { e.stopPropagation(); changeStatus(c.buildingId, s); }}
+                                      style={{ fontSize: "12px", padding: "4px 10px", borderRadius: "4px", border: `1px solid ${isActive ? pm.color : "var(--border)"}`, background: isActive ? pm.bg : "transparent", color: isActive ? pm.color : "var(--text-secondary)", cursor: "pointer", transition: "all 0.15s", fontWeight: isActive ? 600 : 400 }}
+                                    >{pm.label}</button>
+                                  );
+                                })}
+                              </div>
+                            </div>
 
                             {/* Method */}
                             <div>
