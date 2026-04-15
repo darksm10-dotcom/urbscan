@@ -7,7 +7,8 @@ interface NoteFile {
   name: string;
   type: string;
   size: number;
-  data: string; // base64
+  data: string; // base64 data URL
+  url?: string; // public hosted URL (set after upload)
 }
 
 interface Note {
@@ -152,16 +153,51 @@ export default function NotesPanel() {
     setSyncing(true);
     setSyncMsg(null);
     try {
-      const payload = notes.map((n) => ({
+      // Upload any files that don't have a hosted URL yet
+      const filesToUpload = notes.flatMap((n) =>
+        (n.files ?? []).filter((f) => !f.url && f.data)
+      );
+
+      let updatedNotes = notes;
+
+      if (filesToUpload.length > 0) {
+        setSyncMsg({ text: `Uploading ${filesToUpload.length} file(s)...`, ok: true });
+        const uploadRes = await fetch("/api/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            files: filesToUpload.map(({ id, name, type, data }) => ({ id, name, type, data })),
+          }),
+        });
+        if (uploadRes.ok) {
+          const { results } = (await uploadRes.json()) as {
+            results: Array<{ id: string; url?: string; error?: string }>;
+          };
+          // Patch URLs into notes and persist to localStorage
+          const urlMap = new Map(
+            results.filter((r) => r.url).map((r) => [r.id, r.url!])
+          );
+          updatedNotes = notes.map((n) => ({
+            ...n,
+            files: (n.files ?? []).map((f) =>
+              urlMap.has(f.id) ? { ...f, url: urlMap.get(f.id) } : f
+            ),
+          }));
+          setNotes(updatedNotes);
+          saveNotes(updatedNotes);
+        }
+      }
+
+      const payload = updatedNotes.map((n) => ({
         id: n.id,
         title: n.title || "Untitled",
         content: n.content,
         tags: n.tags,
-        // send metadata only — no base64 data to keep payload small
-        files: (n.files ?? []).map(({ id, name, type, size }) => ({ id, name, type, size })),
+        files: (n.files ?? []).map(({ id, name, type, size, url }) => ({ id, name, type, size, url })),
         createdAt: n.createdAt,
         updatedAt: n.updatedAt,
       }));
+
       const res = await fetch("/api/notion/notes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

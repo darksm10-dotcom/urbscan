@@ -7,6 +7,7 @@ interface NoteFile {
   name: string;
   type: string;
   size: number;
+  url?: string; // public URL after upload
 }
 
 interface NotePayload {
@@ -50,12 +51,30 @@ function buildProperties(note: NotePayload) {
     props["Tags"] = { rich_text: [{ text: { content: note.tags } }] };
   }
 
-  // Attachments as dedicated column — list each file with name, type, size
+  // Attachments — render as rich_text with clickable hyperlinks when URLs are available
   if (note.files && note.files.length > 0) {
-    const text = note.files
-      .map((f) => `${f.name} (${f.type || "file"}, ${formatSize(f.size)})`)
-      .join("\n");
-    props["Attachments"] = { rich_text: [{ text: { content: text.slice(0, 2000) } }] };
+    const richText: unknown[] = [];
+    note.files.forEach((f, i) => {
+      if (i > 0) richText.push({ text: { content: "\n" } });
+      if (f.url) {
+        // Clickable link: file name links to the hosted file
+        richText.push({
+          type: "text",
+          text: { content: f.name, link: { url: f.url } },
+        });
+        richText.push({
+          type: "text",
+          text: { content: ` (${formatSize(f.size)})` },
+        });
+      } else {
+        richText.push({
+          type: "text",
+          text: { content: `${f.name} (${f.type || "file"}, ${formatSize(f.size)})` },
+        });
+      }
+    });
+    // Notion rich_text max 100 elements
+    props["Attachments"] = { rich_text: richText.slice(0, 100) };
   } else {
     props["Attachments"] = { rich_text: [] };
   }
