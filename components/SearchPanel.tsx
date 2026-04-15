@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Industry, SearchLocation, SearchParams } from "@/types";
+import { REGION_PRESETS } from "@/lib/regions";
 import { geocodeAddress } from "@/lib/places";
 import { getHistory, HistoryEntry } from "@/lib/history";
 
@@ -101,6 +102,7 @@ export default function SearchPanel({ onSearch, loading }: SearchPanelProps) {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [suggestion, setSuggestion] = useState<{ industry: Industry; label: string } | null>(null);
   const [activePreset, setActivePreset] = useState<string | null>(null);
+  const [activeRegion, setActiveRegion] = useState<string | null>(null);
   const [acSuggestions, setAcSuggestions] = useState<Record<number, Suggestion[]>>({});
   const [acOpen, setAcOpen] = useState<Record<number, boolean>>({});
   const debounceRefs = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
@@ -133,7 +135,7 @@ export default function SearchPanel({ onSearch, loading }: SearchPanelProps) {
 
   function updateAddress(idx: number, val: string) {
     setLocations((prev) => prev.map((l, i) => i === idx ? { address: val } : l));
-    if (idx === 0) setSuggestion(detectIndustry(val));
+    if (idx === 0) { setSuggestion(detectIndustry(val)); setActiveRegion(null); }
     fetchSuggestions(idx, val);
   }
 
@@ -174,6 +176,12 @@ export default function SearchPanel({ onSearch, loading }: SearchPanelProps) {
       }
     }
     return resolved;
+  }
+
+  function handleRegion(region: typeof REGION_PRESETS[number]) {
+    setActiveRegion(region.address);
+    setLocations([{ address: region.address }]);
+    setSuggestion(null);
   }
 
   async function handlePreset(preset: typeof BUILDING_PRESETS[number]) {
@@ -271,6 +279,61 @@ export default function SearchPanel({ onSearch, loading }: SearchPanelProps) {
           {activePreset
             ? `▸ 已选: ${BUILDING_PRESETS.find(p => p.keyword === activePreset)?.label} · 填入地点后自动触发`
             : "选择楼宇类型，填入地点后自动搜索"}
+        </div>
+      </div>
+
+      <div style={divider} />
+
+      {/* Region Quick Select */}
+      <div style={{ marginBottom: "18px" }}>
+        <label style={label}>地区分类 · 快速定位</label>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "4px" }}>
+          {REGION_PRESETS.map((region) => {
+            const active = activeRegion === region.address;
+            return (
+              <button
+                key={region.address}
+                type="button"
+                title={region.hint}
+                onClick={() => handleRegion(region)}
+                style={{
+                  background: active ? "var(--amber-glow)" : "var(--bg-elevated)",
+                  border: `1px solid ${active ? "var(--amber)" : "var(--border)"}`,
+                  borderRadius: "8px",
+                  padding: "8px 4px",
+                  color: active ? "var(--amber)" : "var(--text-secondary)",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                  transition: "all 0.15s",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: "3px",
+                  fontFamily: "var(--font-ui)",
+                }}
+                onMouseEnter={(e) => {
+                  if (!active) {
+                    (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--amber-dim)";
+                    (e.currentTarget as HTMLButtonElement).style.color = "var(--amber)";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!active) {
+                    (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--border)";
+                    (e.currentTarget as HTMLButtonElement).style.color = "var(--text-secondary)";
+                  }
+                }}
+              >
+                <span style={{ fontSize: "16px", lineHeight: 1 }}>{region.icon}</span>
+                <span>{region.label}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ marginTop: "5px", fontSize: "11px", color: "var(--text-dim)", letterSpacing: "0.06em" }}>
+          {activeRegion
+            ? `▸ 已选: ${REGION_PRESETS.find(r => r.address === activeRegion)?.label} · ${REGION_PRESETS.find(r => r.address === activeRegion)?.hint}`
+            : "选择地区后自动填入地点栏"}
         </div>
       </div>
 

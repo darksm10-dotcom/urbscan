@@ -12,6 +12,7 @@ import {
   onContactsChanged,
 } from "@/lib/contacts";
 import { getPipelineData, setLeadStatus } from "@/lib/pipeline";
+import { REGION_PRESETS } from "@/lib/regions";
 import { buildNotionPayload, syncToNotion } from "@/lib/notion";
 
 const PIPELINE_META: Record<LeadStatus, { label: string; color: string; bg: string }> = {
@@ -167,6 +168,7 @@ export default function ContactsPanel() {
   const [editForm, setEditForm] = useState<EditForm | null>(null);
   const [notifStatus, setNotifStatus] = useState<NotificationPermission | "unsupported">("default");
   const [pipeline, setPipeline] = useState<Record<string, PipelineEntry>>({});
+  const [regionFilter, setRegionFilter] = useState<string | null>(null);
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [notionSyncing, setNotionSyncing] = useState(false);
   const [notionMsg, setNotionMsg] = useState<{ text: string; ok: boolean } | null>(null);
@@ -292,6 +294,15 @@ export default function ContactsPanel() {
     let list = filter === "all"
       ? contacts
       : contacts.filter((c) => (pipeline[c.buildingId]?.status ?? "new") === filter);
+    if (regionFilter) {
+      const region = REGION_PRESETS.find((r) => r.label === regionFilter);
+      if (region) {
+        list = list.filter((c) => {
+          const addr = (c.buildingAddress ?? "").toLowerCase();
+          return region.match.some((kw) => addr.includes(kw));
+        });
+      }
+    }
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter((c) =>
@@ -308,7 +319,7 @@ export default function ContactsPanel() {
       if (sortCol === "method")  cmp = a.method.localeCompare(b.method);
       return sortAsc ? cmp : -cmp;
     });
-  }, [contacts, pipeline, filter, search, sortCol, sortAsc, today]);
+  }, [contacts, pipeline, filter, regionFilter, search, sortCol, sortAsc, today]);
 
   function SortIcon({ col }: { col: SortCol }) {
     if (sortCol !== col) return <span style={{ opacity: 0.3, marginLeft: "4px" }}>↕</span>;
@@ -347,6 +358,46 @@ export default function ContactsPanel() {
         <StatCard label="跟进中" value={stats.following} color="var(--cyan)" />
         <StatCard label="成交"   value={stats.won}       color="#7ab86a" />
         <StatCard label="逾期"   value={stats.overdue}   color={stats.overdue > 0 ? "#e05555" : "var(--text-dim)"} />
+      </div>
+
+      {/* Region filter */}
+      <div style={{ marginBottom: "12px" }}>
+        <div style={{ display: "flex", gap: "4px", overflowX: "auto", paddingBottom: "4px" }}>
+          <button
+            onClick={() => setRegionFilter(null)}
+            style={{
+              flexShrink: 0,
+              fontSize: "12px", padding: "5px 14px", borderRadius: "6px",
+              border: `1px solid ${regionFilter === null ? "var(--amber)" : "var(--border)"}`,
+              background: regionFilter === null ? "var(--amber-glow)" : "transparent",
+              color: regionFilter === null ? "var(--amber)" : "var(--text-secondary)",
+              cursor: "pointer", transition: "all 0.15s", whiteSpace: "nowrap", fontFamily: "var(--font-ui)",
+            }}
+          >全部地区</button>
+          {REGION_PRESETS.map((r) => {
+            const active = regionFilter === r.label;
+            return (
+              <button key={r.label}
+                title={r.hint}
+                onClick={() => setRegionFilter(active ? null : r.label)}
+                style={{
+                  flexShrink: 0,
+                  fontSize: "12px", padding: "5px 10px", borderRadius: "6px",
+                  border: `1px solid ${active ? "var(--amber)" : "var(--border)"}`,
+                  background: active ? "var(--amber-glow)" : "transparent",
+                  color: active ? "var(--amber)" : "var(--text-secondary)",
+                  cursor: "pointer", transition: "all 0.15s", whiteSpace: "nowrap", fontFamily: "var(--font-ui)",
+                  display: "flex", alignItems: "center", gap: "4px",
+                }}
+                onMouseEnter={(e) => { if (!active) { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--amber-dim)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--amber)"; } }}
+                onMouseLeave={(e) => { if (!active) { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--border)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--text-secondary)"; } }}
+              >
+                <span>{r.icon}</span>
+                <span>{r.label}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Pipeline status tabs + search */}
