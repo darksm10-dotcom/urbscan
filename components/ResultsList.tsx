@@ -48,32 +48,78 @@ function computeWeightedScore(b: Building, radius: number, w: ScoreWeights): num
   return Math.round(((countRaw * w.count + ratingRaw * w.rating + proxRaw * w.proximity) / total) * 100);
 }
 
-const WA_TEMPLATES: { id: string; label: string; text: (lead: string, name: string, company: string) => string }[] = [
+interface WaTemplate {
+  id: string;
+  label: string;
+  body: string;
+}
+
+const DEFAULT_TEMPLATES: WaTemplate[] = [
   {
     id: "intro",
     label: "Initial Outreach",
-    text: (lead, name, company) =>
-      `Hi, I'm ${name || "[Your Name]"} from ${company || "[Your Company]"}.\n\nI came across ${lead} and believe we could offer something valuable for your business.\n\nWould you be open to a quick chat? 😊`,
+    body: "Hi, I'm {name} from {company}.\n\nI came across {lead} and believe we could offer something valuable for your business.\n\nWould you be open to a quick chat? 😊",
   },
   {
     id: "followup",
     label: "Follow Up",
-    text: (lead, name, company) =>
-      `Hi there,\n\nThis is ${name || "[Your Name]"} from ${company || "[Your Company]"}. I reached out to ${lead} recently and wanted to follow up.\n\nWould you have a moment to connect this week? 🙏`,
+    body: "Hi there,\n\nThis is {name} from {company}. I reached out to {lead} recently and wanted to follow up.\n\nWould you have a moment to connect this week? 🙏",
   },
   {
     id: "pitch",
     label: "Product Pitch",
-    text: (lead, name, company) =>
-      `Hi ${lead},\n\nI'm ${name || "[Your Name]"} from ${company || "[Your Company]"}. We help businesses like yours with [your service/product].\n\nI'd love to share more — would you be interested? 📋`,
+    body: "Hi {lead},\n\nI'm {name} from {company}. We help businesses like yours with [your service/product].\n\nI'd love to share more — would you be interested? 📋",
   },
   {
     id: "meeting",
     label: "Meeting Request",
-    text: (lead, name, company) =>
-      `Hi, I'm ${name || "[Your Name]"} from ${company || "[Your Company]"}.\n\nI'd like to arrange a brief 15–20 min visit with ${lead}'s team.\n\nWould this week or next work for you?`,
+    body: "Hi, I'm {name} from {company}.\n\nI'd like to arrange a brief 15–20 min visit with {lead}'s team.\n\nWould this week or next work for you?",
   },
 ];
+
+const TEMPLATES_KEY = "urbscan_wa_templates";
+const LAST_TEMPLATE_KEY = "urbscan_wa_last_template";
+
+function loadTemplates(): WaTemplate[] {
+  if (typeof window === "undefined") return DEFAULT_TEMPLATES;
+  try {
+    const raw = localStorage.getItem(TEMPLATES_KEY);
+    if (!raw) return DEFAULT_TEMPLATES;
+    const parsed = JSON.parse(raw) as WaTemplate[];
+    return parsed.length > 0 ? parsed : DEFAULT_TEMPLATES;
+  } catch {
+    return DEFAULT_TEMPLATES;
+  }
+}
+
+function persistTemplates(templates: WaTemplate[]): void {
+  localStorage.setItem(TEMPLATES_KEY, JSON.stringify(templates));
+}
+
+function loadLastTemplateId(): string {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem(LAST_TEMPLATE_KEY) ?? "";
+}
+
+function saveLastTemplateId(id: string): void {
+  localStorage.setItem(LAST_TEMPLATE_KEY, id);
+}
+
+function loadPhoneTemplateId(phoneDigits: string): string {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem(`urbscan_wa_tmpl_${phoneDigits}`) ?? "";
+}
+
+function savePhoneTemplateId(phoneDigits: string, id: string): void {
+  localStorage.setItem(`urbscan_wa_tmpl_${phoneDigits}`, id);
+}
+
+function interpolateTemplate(body: string, lead: string, name: string, company: string): string {
+  return body
+    .replace(/\{lead\}/g, lead || "[Lead Company]")
+    .replace(/\{name\}/g, name || "[Your Name]")
+    .replace(/\{company\}/g, company || "[Your Company]");
+}
 
 function whatsappLink(phone: string): string {
   return `https://wa.me/${phone.replace(/\D/g, "")}`;
@@ -202,18 +248,73 @@ interface ComposerProps {
 }
 
 function WhatsAppComposer({ phone, leadName, senderName, senderCompany, onSenderChange, onClose }: ComposerProps) {
-  const [activeTemplate, setActiveTemplate] = useState(WA_TEMPLATES[0].id);
-  const [text, setText] = useState(() => WA_TEMPLATES[0].text(leadName, senderName, senderCompany));
+  const phoneDigits = phone.replace(/\D/g, "");
+  const storageKey = `wa_draft_${phoneDigits}`;
+  const [templates, setTemplates] = useState<WaTemplate[]>(() => loadTemplates());
+  const [activeTemplate, setActiveTemplate] = useState(() => {
+    const list = loadTemplates();
+    // Per-phone first, then global last used, then first template
+    const perPhone = loadPhoneTemplateId(phoneDigits);
+    const lastGlobal = loadLastTemplateId();
+    const id = perPhone || lastGlobal;
+    return list.find((t) => t.id === id)?.id ?? list[0]?.id ?? "";
+  });
+  const [text, setText] = useState(() => {
+    if (typeof window === "undefined") return "";
+    const saved = localStorage.getItem(storageKey);
+    if (saved) return saved;
+    // No saved draft — render the per-phone template (or global last)
+    const list = loadTemplates();
+    const perPhone = loadPhoneTemplateId(phoneDigits);
+    const lastGlobal = loadLastTemplateId();
+    const id = perPhone || lastGlobal;
+    const t = list.find((tmpl) => tmpl.id === id) ?? list[0];
+    return t ? interpolateTemplate(t.body, leadName, senderName, senderCompany) : "";
+  });
+  const [draftSaved, setDraftSaved] = useState(false);
   const [localName, setLocalName] = useState(senderName);
   const [localCompany, setLocalCompany] = useState(senderCompany);
   const [files, setFiles] = useState<File[]>([]);
   const [copied, setCopied] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  function applyTemplate(id: string, name: string, company: string) {
-    const t = WA_TEMPLATES.find((t) => t.id === id);
-    if (t) setText(t.text(leadName, name, company));
+  // Template management state
+  const [hoveredTab, setHoveredTab] = useState<string | null>(null);
+  const [formMode, setFormMode] = useState<"none" | "new" | "edit">("none");
+  const [formLabel, setFormLabel] = useState("");
+  const [formBody, setFormBody] = useState("");
+  const [formEditId, setFormEditId] = useState<string | null>(null);
+
+  function saveText(val: string) {
+    setText(val);
+    localStorage.setItem(storageKey, val);
+  }
+
+  function applyTemplate(id: string, name: string, company: string, tmplList: WaTemplate[] = templates) {
+    const t = tmplList.find((t) => t.id === id);
+    if (t) saveText(interpolateTemplate(t.body, leadName, name, company));
     setActiveTemplate(id);
+    saveLastTemplateId(id);
+    savePhoneTemplateId(phoneDigits, id);
+  }
+
+  function saveDraft() {
+    // Un-interpolate: replace actual values back to placeholders, then save as template body
+    let body = text;
+    if (leadName) body = body.split(leadName).join("{lead}");
+    if (localName) body = body.split(localName).join("{name}");
+    if (localCompany) body = body.split(localCompany).join("{company}");
+
+    const updated = templates.map((t) =>
+      t.id === activeTemplate ? { ...t, body } : t
+    );
+    setTemplates(updated);
+    persistTemplates(updated);
+    // Clear per-company overrides so all companies use the updated template
+    const allKeys = Object.keys(localStorage).filter((k) => k.startsWith("wa_draft_"));
+    allKeys.forEach((k) => localStorage.removeItem(k));
+    setDraftSaved(true);
+    setTimeout(() => setDraftSaved(false), 2000);
   }
 
   function handleSenderChange(name: string, company: string) {
@@ -223,11 +324,68 @@ function WhatsAppComposer({ phone, leadName, senderName, senderCompany, onSender
     applyTemplate(activeTemplate, name, company);
   }
 
-  function handleSend() {
-    window.open(`https://wa.me/${phone.replace(/\D/g, "")}?text=${encodeURIComponent(text)}`, "_blank");
-    if (files.length > 0) {
-      setTimeout(() => alert(`✅ WhatsApp opened with your message.\n\nPlease attach ${files.length} file(s) manually in the WhatsApp window:\n${files.map((f) => `• ${f.name}`).join("\n")}`), 300);
+  function openNewForm() {
+    setFormMode("new");
+    setFormLabel("");
+    setFormBody("");
+    setFormEditId(null);
+  }
+
+  function openEditForm(t: WaTemplate) {
+    setFormMode("edit");
+    setFormLabel(t.label);
+    setFormBody(t.body);
+    setFormEditId(t.id);
+  }
+
+  function saveForm() {
+    if (!formLabel.trim() || !formBody.trim()) return;
+    let updated: WaTemplate[];
+    if (formMode === "new") {
+      const newT: WaTemplate = {
+        id: `custom_${Date.now()}`,
+        label: formLabel.trim(),
+        body: formBody.trim(),
+      };
+      updated = [...templates, newT];
+      setTemplates(updated);
+      persistTemplates(updated);
+      applyTemplate(newT.id, localName, localCompany, updated);
+    } else if (formMode === "edit" && formEditId) {
+      updated = templates.map((t) =>
+        t.id === formEditId ? { ...t, label: formLabel.trim(), body: formBody.trim() } : t
+      );
+      setTemplates(updated);
+      persistTemplates(updated);
+      if (activeTemplate === formEditId) {
+        applyTemplate(formEditId, localName, localCompany, updated);
+      }
+    } else {
+      return;
     }
+    setFormMode("none");
+  }
+
+  function deleteTemplate(id: string) {
+    const updated = templates.filter((t) => t.id !== id);
+    if (updated.length === 0) return;
+    setTemplates(updated);
+    persistTemplates(updated);
+    if (activeTemplate === id) {
+      applyTemplate(updated[0].id, localName, localCompany, updated);
+    }
+  }
+
+  async function handleSend() {
+    if (files.length > 0 && typeof navigator.share === "function" && navigator.canShare?.({ files, text })) {
+      try {
+        await navigator.share({ text, files });
+        return;
+      } catch {
+        // user cancelled or share failed — fall through to wa.me
+      }
+    }
+    window.open(`https://wa.me/${phone.replace(/\D/g, "")}?text=${encodeURIComponent(text)}`, "_blank");
   }
 
   function handleCopy() {
@@ -254,55 +412,142 @@ function WhatsAppComposer({ phone, leadName, senderName, senderCompany, onSender
 
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", borderBottom: border, background: "rgba(37,211,102,0.06)" }}>
-        <span style={{ fontSize: "13px", color: WA_GREEN, letterSpacing: "0.15em", textTransform: "uppercase" }}>💬 WhatsApp Composer</span>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <span style={{ fontSize: "13px", color: WA_GREEN, letterSpacing: "0.15em", textTransform: "uppercase" }}>💬 WhatsApp</span>
+          <span style={{ fontSize: "12px", color: "var(--text-dim)" }}>→</span>
+          <span style={{ fontSize: "13px", color: "var(--amber)", fontWeight: 600 }}>{leadName}</span>
+        </div>
         <button onClick={onClose} style={{ background: "transparent", border: "none", color: "var(--text-dim)", fontSize: "15px", cursor: "pointer", lineHeight: 1 }}>✕</button>
+      </div>
+
+      {/* From row — set once, applies to all templates */}
+      <div style={{ display: "flex", gap: "6px", padding: "8px 12px", borderBottom: border, background: "rgba(0,0,0,0.15)", alignItems: "center" }}>
+        <span style={{ fontSize: "11px", color: "var(--text-dim)", flexShrink: 0, letterSpacing: "0.08em" }}>FROM</span>
+        <input
+          value={localName}
+          onChange={(e) => handleSenderChange(e.target.value, localCompany)}
+          placeholder="Your name"
+          style={{ flex: 1, background: "transparent", border: "none", borderBottom: "1px solid var(--border)", color: "var(--text-primary)", fontSize: "12px", padding: "2px 4px", outline: "none", fontFamily: "'JetBrains Mono', monospace", minWidth: 0 }}
+        />
+        <span style={{ fontSize: "11px", color: "var(--text-dim)" }}>@</span>
+        <input
+          value={localCompany}
+          onChange={(e) => handleSenderChange(localName, e.target.value)}
+          placeholder="Your company"
+          style={{ flex: 2, background: "transparent", border: "none", borderBottom: "1px solid var(--border)", color: "var(--text-primary)", fontSize: "12px", padding: "2px 4px", outline: "none", fontFamily: "'JetBrains Mono', monospace", minWidth: 0 }}
+        />
       </div>
 
       <div style={{ padding: "12px" }}>
 
-        {/* Sender info */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginBottom: "12px" }}>
-          {[
-            { label: "Your Name", value: localName, key: "name" },
-            { label: "Your Company", value: localCompany, key: "company" },
-          ].map(({ label, value, key }) => (
-            <div key={key}>
-              <div style={{ fontSize: "9px", color: "var(--text-dim)", letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "4px" }}>{label}</div>
-              <input
-                value={value}
-                placeholder={label}
-                onChange={(e) => handleSenderChange(key === "name" ? e.target.value : localName, key === "company" ? e.target.value : localCompany)}
-                style={{ width: "100%", background: "rgba(212,160,60,0.04)", border: "1px solid var(--border)", borderRadius: "3px", padding: "6px 9px", color: "var(--text-primary)", fontSize: "15px", fontFamily: "'JetBrains Mono', monospace", outline: "none" }}
-              />
-            </div>
-          ))}
+        {/* Template tabs + New button */}
+        <div style={{ display: "flex", gap: "4px", marginBottom: formMode !== "none" ? "8px" : "10px", flexWrap: "wrap", alignItems: "center" }}>
+          {templates.map((t) => {
+            const isActive = activeTemplate === t.id;
+            const isHovered = hoveredTab === t.id;
+            return (
+              <div
+                key={t.id}
+                style={{ position: "relative", display: "inline-flex" }}
+                onMouseEnter={() => setHoveredTab(t.id)}
+                onMouseLeave={() => setHoveredTab(null)}
+              >
+                <button
+                  onClick={() => applyTemplate(t.id, localName, localCompany)}
+                  style={{
+                    fontSize: "15px",
+                    padding: `3px ${isHovered ? "44px" : "10px"} 3px 10px`,
+                    borderRadius: "2px",
+                    border: `1px solid ${isActive ? WA_GREEN : "var(--border)"}`,
+                    background: isActive ? "rgba(37,211,102,0.1)" : "transparent",
+                    color: isActive ? WA_GREEN : "var(--text-secondary)",
+                    cursor: "pointer",
+                    fontFamily: "'JetBrains Mono', monospace",
+                    transition: "padding 0.1s",
+                    whiteSpace: "nowrap",
+                  }}
+                >{t.label}</button>
+                {isHovered && (
+                  <div style={{ position: "absolute", right: "3px", top: "50%", transform: "translateY(-50%)", display: "flex", gap: "1px", pointerEvents: "all" }}>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); openEditForm(t); }}
+                      title="Edit template"
+                      style={{ background: "none", border: "none", cursor: "pointer", color: WA_GREEN, fontSize: "11px", padding: "2px 3px", lineHeight: 1, opacity: 0.8 }}
+                    >✎</button>
+                    {templates.length > 1 && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); deleteTemplate(t.id); }}
+                        title="Delete template"
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-dim)", fontSize: "11px", padding: "2px 3px", lineHeight: 1, opacity: 0.7 }}
+                      >✕</button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          <button
+            onClick={formMode === "new" ? () => setFormMode("none") : openNewForm}
+            style={{
+              fontSize: "15px",
+              padding: "3px 10px",
+              borderRadius: "2px",
+              border: `1px solid ${formMode === "new" ? WA_GREEN : "var(--border)"}`,
+              background: formMode === "new" ? "rgba(37,211,102,0.1)" : "transparent",
+              color: formMode === "new" ? WA_GREEN : "var(--text-dim)",
+              cursor: "pointer",
+              fontFamily: "'JetBrains Mono', monospace",
+              transition: "all 0.15s",
+            }}
+          >+ New</button>
         </div>
 
-        {/* Template tabs */}
-        <div style={{ display: "flex", gap: "4px", marginBottom: "10px", flexWrap: "wrap" }}>
-          {WA_TEMPLATES.map((t) => (
-            <button key={t.id} onClick={() => applyTemplate(t.id, localName, localCompany)}
-              style={{ fontSize: "15px", padding: "3px 10px", borderRadius: "2px", border: `1px solid ${activeTemplate === t.id ? WA_GREEN : "var(--border)"}`, background: activeTemplate === t.id ? "rgba(37,211,102,0.1)" : "transparent", color: activeTemplate === t.id ? WA_GREEN : "var(--text-secondary)", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", transition: "all 0.15s" }}
-            >{t.label}</button>
-          ))}
-        </div>
+        {/* Inline template form */}
+        {formMode !== "none" && (
+          <div style={{ marginBottom: "10px", padding: "10px", border: `1px solid rgba(37,211,102,0.2)`, borderRadius: "3px", background: "rgba(37,211,102,0.04)", animation: "fadeSlideIn 0.15s ease" }}>
+            <div style={{ fontSize: "11px", color: WA_GREEN, letterSpacing: "0.1em", marginBottom: "8px", textTransform: "uppercase" }}>
+              {formMode === "new" ? "New Template" : "Edit Template"}
+            </div>
+            <input
+              value={formLabel}
+              onChange={(e) => setFormLabel(e.target.value)}
+              placeholder="Template name"
+              style={{ width: "100%", background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "3px", padding: "5px 8px", color: "var(--text-primary)", fontSize: "13px", outline: "none", marginBottom: "6px", fontFamily: "'JetBrains Mono', monospace", boxSizing: "border-box" }}
+            />
+            <textarea
+              value={formBody}
+              onChange={(e) => setFormBody(e.target.value)}
+              placeholder={"Message body...\nUse {lead}, {name}, {company} as placeholders"}
+              rows={5}
+              style={{ width: "100%", background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "3px", padding: "6px 8px", color: "var(--text-primary)", fontSize: "13px", outline: "none", fontFamily: "'JetBrains Mono', monospace", resize: "vertical", lineHeight: 1.6, boxSizing: "border-box" }}
+            />
+            <div style={{ fontSize: "11px", color: "var(--text-dim)", margin: "5px 0 8px" }}>
+              Variables: <span style={{ color: WA_GREEN }}>{"{lead}"}</span> · <span style={{ color: WA_GREEN }}>{"{name}"}</span> · <span style={{ color: WA_GREEN }}>{"{company}"}</span>
+            </div>
+            <div style={{ display: "flex", gap: "6px" }}>
+              <button
+                onClick={saveForm}
+                disabled={!formLabel.trim() || !formBody.trim()}
+                style={{ fontSize: "12px", padding: "4px 14px", borderRadius: "2px", border: `1px solid ${WA_GREEN}`, background: "rgba(37,211,102,0.12)", color: WA_GREEN, cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", opacity: (!formLabel.trim() || !formBody.trim()) ? 0.45 : 1 }}
+              >Save</button>
+              <button
+                onClick={() => setFormMode("none")}
+                style={{ fontSize: "12px", padding: "4px 12px", borderRadius: "2px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-secondary)", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}
+              >Cancel</button>
+            </div>
+          </div>
+        )}
 
         {/* Editable message */}
         <textarea
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => saveText(e.target.value)}
           rows={6}
           style={{ width: "100%", background: "rgba(37,211,102,0.03)", border, borderRadius: "3px", padding: "10px 12px", color: "var(--text-primary)", fontSize: "15px", fontFamily: "'JetBrains Mono', monospace", resize: "vertical", outline: "none", lineHeight: 1.6 }}
         />
 
-        {/* File attachment */}
+        {/* File attachments */}
         <div style={{ marginTop: "10px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
-            <button onClick={() => fileInputRef.current?.click()}
-              style={{ fontSize: "13px", background: "transparent", border, borderRadius: "3px", padding: "4px 12px", color: WA_GREEN, cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}
-            >📎 Attach Files / Photos</button>
-            {files.length > 0 && <span style={{ fontSize: "15px", color: "var(--text-dim)" }}>{files.length} file{files.length > 1 ? "s" : ""} selected</span>}
-          </div>
           <input ref={fileInputRef} type="file" multiple accept="image/*,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx" onChange={handleFiles} style={{ display: "none" }} />
 
           {files.length > 0 && (
@@ -313,35 +558,37 @@ function WhatsAppComposer({ phone, leadName, senderName, senderCompany, onSender
                 return (
                   <div key={i} style={{ position: "relative", border, borderRadius: "3px", overflow: "hidden", background: "rgba(37,211,102,0.04)" }}>
                     {previewUrl ? (
-                      <img src={previewUrl} alt={f.name} style={{ width: "64px", height: "64px", objectFit: "cover", display: "block" }} />
+                      <img src={previewUrl} alt={f.name} style={{ width: "56px", height: "56px", objectFit: "cover", display: "block" }} />
                     ) : (
-                      <div style={{ width: "64px", height: "64px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "4px" }}>
-                        <span style={{ fontSize: "16px" }}>📄</span>
-                        <span style={{ fontSize: "8px", color: "var(--text-dim)", maxWidth: "56px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", padding: "0 2px" }}>{f.name}</span>
+                      <div style={{ width: "56px", height: "56px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "3px" }}>
+                        <span style={{ fontSize: "18px" }}>📄</span>
+                        <span style={{ fontSize: "8px", color: "var(--text-dim)", maxWidth: "50px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", padding: "0 2px" }}>{f.name}</span>
                       </div>
                     )}
-                    <button onClick={() => removeFile(i)} style={{ position: "absolute", top: "2px", right: "2px", background: "rgba(0,0,0,0.6)", border: "none", borderRadius: "50%", width: "16px", height: "16px", color: "#fff", fontSize: "9px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>✕</button>
+                    <button onClick={() => removeFile(i)} style={{ position: "absolute", top: "2px", right: "2px", background: "rgba(0,0,0,0.65)", border: "none", borderRadius: "50%", width: "15px", height: "15px", color: "#fff", fontSize: "9px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>✕</button>
                   </div>
                 );
               })}
             </div>
           )}
-
-          {files.length > 0 && (
-            <div style={{ fontSize: "15px", color: "var(--text-dim)", padding: "6px 8px", borderRadius: "3px", border: "1px solid rgba(212,160,60,0.15)", background: "rgba(212,160,60,0.04)", lineHeight: 1.5 }}>
-              ⚠ WhatsApp links only support pre-filled text. After clicking Send, attach your files manually in the WhatsApp window.
-            </div>
-          )}
         </div>
 
         {/* Action buttons */}
-        <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+        <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
+          <button onClick={() => fileInputRef.current?.click()}
+            style={{ padding: "8px 12px", background: "transparent", border, borderRadius: "3px", color: files.length > 0 ? WA_GREEN : "var(--text-dim)", fontSize: "15px", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", whiteSpace: "nowrap" }}
+            title="Attach files"
+          >📎{files.length > 0 ? ` ${files.length}` : ""}</button>
           <button onClick={handleSend}
             style={{ flex: 1, padding: "8px", background: "rgba(37,211,102,0.12)", border: `1px solid ${WA_GREEN}`, borderRadius: "3px", color: WA_GREEN, fontSize: "15px", fontWeight: 600, cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.06em" }}
-          >💬 Open WhatsApp & Send</button>
+          >💬 {files.length > 0 ? "Share via WhatsApp" : "Open WhatsApp & Send"}</button>
+          <button onClick={saveDraft}
+            title="Save this message as the template (applies to all companies)"
+            style={{ padding: "8px 12px", background: draftSaved ? "rgba(0,212,168,0.1)" : "transparent", border: draftSaved ? "1px solid var(--cyan)" : border, borderRadius: "3px", color: draftSaved ? "var(--cyan)" : "var(--text-secondary)", fontSize: "13px", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", transition: "all 0.2s", whiteSpace: "nowrap" }}
+          >{draftSaved ? "✓ Saved" : "💾 Save Template"}</button>
           <button onClick={handleCopy}
             style={{ padding: "8px 14px", background: "transparent", border, borderRadius: "3px", color: copied ? WA_GREEN : "var(--text-secondary)", fontSize: "15px", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", transition: "all 0.2s" }}
-          >{copied ? "✓ Copied" : "📋 Copy"}</button>
+          >{copied ? "✓" : "📋"}</button>
         </div>
       </div>
     </div>

@@ -12,6 +12,7 @@ import {
   onContactsChanged,
 } from "@/lib/contacts";
 import { getPipelineData, setLeadStatus } from "@/lib/pipeline";
+import { buildNotionPayload, syncToNotion } from "@/lib/notion";
 
 const PIPELINE_META: Record<LeadStatus, { label: string; color: string; bg: string }> = {
   new:       { label: "新线索", color: "var(--text-dim)",    bg: "transparent" },
@@ -167,6 +168,8 @@ export default function ContactsPanel() {
   const [notifStatus, setNotifStatus] = useState<NotificationPermission | "unsupported">("default");
   const [pipeline, setPipeline] = useState<Record<string, PipelineEntry>>({});
   const [importMsg, setImportMsg] = useState<string | null>(null);
+  const [notionSyncing, setNotionSyncing] = useState(false);
+  const [notionMsg, setNotionMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
 
   function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
@@ -181,6 +184,23 @@ export default function ContactsPanel() {
     };
     reader.readAsText(file, "utf-8");
     e.target.value = "";
+  }
+
+  async function handleNotionSync() {
+    if (contacts.length === 0) return;
+    setNotionSyncing(true);
+    setNotionMsg(null);
+    try {
+      const payload = buildNotionPayload(contacts, pipeline);
+      const result = await syncToNotion(payload);
+      const msg = `Synced ${result.created + result.updated} companies (${result.created} new, ${result.updated} updated${result.deleted > 0 ? `, ${result.deleted} deleted` : ""})`;
+      setNotionMsg({ text: result.errors.length > 0 ? `${msg} — ${result.errors.length} errors` : msg, ok: result.errors.length === 0 });
+    } catch (err) {
+      setNotionMsg({ text: `Notion sync failed: ${err instanceof Error ? err.message : "unknown error"}`, ok: false });
+    } finally {
+      setNotionSyncing(false);
+      setTimeout(() => setNotionMsg(null), 5000);
+    }
   }
 
   const reload = useCallback(() => {
@@ -369,6 +389,19 @@ export default function ContactsPanel() {
           >↑ 导入 CSV</button>
           <input ref={importRef} type="file" accept=".csv,text/csv" onChange={handleImport} style={{ display: "none" }} />
           {importMsg && <span style={{ fontSize: "12px", color: "var(--green-bright)", animation: "fadeSlideIn 0.2s ease" }}>{importMsg}</span>}
+          <button
+            onClick={handleNotionSync}
+            disabled={notionSyncing || contacts.length === 0}
+            title="Sync all contacts to Notion database"
+            style={{ fontSize: "12px", padding: "5px 12px", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: notionSyncing ? "var(--text-dim)" : "var(--text-secondary)", cursor: notionSyncing ? "not-allowed" : "pointer", transition: "all 0.15s", whiteSpace: "nowrap", opacity: contacts.length === 0 ? 0.4 : 1 }}
+            onMouseEnter={(e) => { if (!notionSyncing && contacts.length > 0) { (e.currentTarget as HTMLButtonElement).style.borderColor = "#7c3aed"; (e.currentTarget as HTMLButtonElement).style.color = "#7c3aed"; } }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--border)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--text-secondary)"; }}
+          >{notionSyncing ? "⏳ Syncing..." : "◈ Notion"}</button>
+          {notionMsg && (
+            <span style={{ fontSize: "12px", color: notionMsg.ok ? "var(--green-bright)" : "#e05555", animation: "fadeSlideIn 0.2s ease", maxWidth: "260px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {notionMsg.text}
+            </span>
+          )}
         </div>
       </div>
 

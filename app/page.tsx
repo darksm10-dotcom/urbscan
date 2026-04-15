@@ -11,8 +11,9 @@ import { getOverdueFollowUps, onContactsChanged } from "@/lib/contacts";
 const SearchPanel   = dynamic(() => import("@/components/SearchPanel"),   { ssr: false });
 const ResultsList   = dynamic(() => import("@/components/ResultsList"),   { ssr: false });
 const ContactsPanel = dynamic(() => import("@/components/ContactsPanel"), { ssr: false });
+const NotesPanel    = dynamic(() => import("@/components/NotesPanel"),    { ssr: false });
 
-type AppTab = "scan" | "contacts";
+type AppTab = "scan" | "contacts" | "notes";
 
 export default function Home() {
   const [buildings, setBuildings] = useState<Building[]>([]);
@@ -101,6 +102,7 @@ export default function Home() {
           {([
             { tab: "scan",     label: "Scan" },
             { tab: "contacts", label: "Contacts" },
+            { tab: "notes",    label: "Notes" },
           ] as { tab: AppTab; label: string }[]).map(({ tab, label }) => (
             <button
               key={tab}
@@ -182,7 +184,7 @@ export default function Home() {
               />
             </section>
           </>
-        ) : (
+        ) : activeTab === "contacts" ? (
           <section style={{
             flex: 1,
             padding: "32px 40px",
@@ -191,12 +193,7 @@ export default function Home() {
             maxWidth: "900px",
           }}>
             <div style={{ marginBottom: "24px" }}>
-              <div style={{
-                fontSize: "22px",
-                fontWeight: 700,
-                color: "var(--text-primary)",
-                marginBottom: "4px",
-              }}>
+              <div style={{ fontSize: "22px", fontWeight: 700, color: "var(--text-primary)", marginBottom: "4px" }}>
                 Contacts
               </div>
               <div style={{ fontSize: "14px", color: "var(--text-secondary)" }}>
@@ -204,6 +201,10 @@ export default function Home() {
               </div>
             </div>
             <ContactsPanel />
+          </section>
+        ) : (
+          <section style={{ flex: 1, display: "flex", minHeight: 0, overflow: "hidden" }}>
+            <NotesPanel />
           </section>
         )}
       </main>
