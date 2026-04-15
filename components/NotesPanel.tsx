@@ -155,8 +155,10 @@ export default function NotesPanel() {
       const payload = notes.map((n) => ({
         id: n.id,
         title: n.title || "Untitled",
-        content: n.content + (n.files?.length ? `\n\n📎 Attachments: ${n.files.map((f) => f.name).join(", ")}` : ""),
+        content: n.content,
         tags: n.tags,
+        // send metadata only — no base64 data to keep payload small
+        files: (n.files ?? []).map(({ id, name, type, size }) => ({ id, name, type, size })),
         createdAt: n.createdAt,
         updatedAt: n.updatedAt,
       }));

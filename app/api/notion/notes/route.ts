@@ -2,11 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 
 const NOTION_VERSION = "2022-06-28";
 
+interface NoteFile {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+}
+
 interface NotePayload {
   id: string;
   title: string;
   content: string;
   tags: string;
+  files: NoteFile[];
   createdAt: string;
   updatedAt: string;
 }
@@ -19,18 +27,39 @@ function notionHeaders(token: string) {
   };
 }
 
+function formatSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
 function buildProperties(note: NotePayload) {
   const props: Record<string, unknown> = {
     Title: { title: [{ text: { content: note.title || "Untitled" } }] },
     Updated: { date: { start: note.updatedAt.slice(0, 10) } },
     Created: { date: { start: note.createdAt.slice(0, 10) } },
   };
+
   if (note.content) {
     props["Content"] = { rich_text: [{ text: { content: note.content.slice(0, 2000) } }] };
+  } else {
+    props["Content"] = { rich_text: [] };
   }
+
   if (note.tags) {
     props["Tags"] = { rich_text: [{ text: { content: note.tags } }] };
   }
+
+  // Attachments as dedicated column — list each file with name, type, size
+  if (note.files && note.files.length > 0) {
+    const text = note.files
+      .map((f) => `${f.name} (${f.type || "file"}, ${formatSize(f.size)})`)
+      .join("\n");
+    props["Attachments"] = { rich_text: [{ text: { content: text.slice(0, 2000) } }] };
+  } else {
+    props["Attachments"] = { rich_text: [] };
+  }
+
   return props;
 }
 
@@ -102,7 +131,10 @@ export async function POST(req: NextRequest) {
           body: JSON.stringify({ properties }),
         });
         if (res.ok) updated++;
-        else errors.push(`Update failed: ${note.title}`);
+        else {
+          const err = (await res.json().catch(() => ({}))) as { message?: string };
+          errors.push(`Update failed: ${note.title} — ${err.message ?? "unknown"}`);
+        }
       } else {
         const res = await fetch("https://api.notion.com/v1/pages", {
           method: "POST",
@@ -114,7 +146,8 @@ export async function POST(req: NextRequest) {
           const page = (await res.json()) as { id: string };
           existing.set(key, page.id);
         } else {
-          errors.push(`Create failed: ${note.title}`);
+          const err = (await res.json().catch(() => ({}))) as { message?: string };
+          errors.push(`Create failed: ${note.title} — ${err.message ?? "unknown"}`);
         }
       }
     } catch {
@@ -122,7 +155,6 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Archive deleted notes
   for (const [title, pageId] of existing) {
     if (!inPayload.has(title)) {
       const ok = await archivePage(token, pageId);
