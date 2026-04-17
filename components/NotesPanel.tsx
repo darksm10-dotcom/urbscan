@@ -222,7 +222,7 @@ export default function NotesPanel() {
   const base: React.CSSProperties = { background: "transparent", border: "none", outline: "none", color: "var(--text-primary)", fontFamily: "var(--font-ui)", width: "100%" };
 
   return (
-    <div style={{ display: "flex", height: "100%", animation: "fadeSlideIn 0.3s ease" }}>
+    <div style={{ display: "flex", height: "100%", width: "100%", animation: "fadeSlideIn 0.3s ease" }}>
 
       {/* ── Sidebar ── */}
       <div style={{ width: "240px", flexShrink: 0, borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", background: "var(--bg-card)" }}>
@@ -284,11 +284,12 @@ export default function NotesPanel() {
             <input ref={fileInputRef} type="file" multiple style={{ display: "none" }}
               onChange={(e) => { if (e.target.files) { attachFiles(e.target.files); e.target.value = ""; } }}
             />
+
             <button onClick={() => fileInputRef.current?.click()}
-              title="Attach files (or drag & drop)"
-              style={{ fontSize: "13px", padding: "4px 12px", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-secondary)", cursor: "pointer" }}
+              title="Add attachment"
+              style={{ fontSize: "12px", padding: "4px 12px", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-dim)", cursor: "pointer" }}
               onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "var(--amber)"; (e.currentTarget as HTMLElement).style.color = "var(--amber)"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "var(--border)"; (e.currentTarget as HTMLElement).style.color = "var(--text-secondary)"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "var(--border)"; (e.currentTarget as HTMLElement).style.color = "var(--text-dim)"; }}
             >📎 Attach</button>
 
             <button onClick={() => deleteNote(active.id)}
@@ -307,87 +308,40 @@ export default function NotesPanel() {
             </div>
           )}
 
-          <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }}>
-            {/* Title */}
-            <input ref={titleRef} value={active.title} onChange={(e) => updateNote({ title: e.target.value })}
-              placeholder="Note title..."
-              style={{ ...base, fontSize: "24px", fontWeight: 700, letterSpacing: "-0.01em", marginBottom: "8px", display: "block" }}
-            />
+          <div style={{ flex: 1, display: "flex", minHeight: 0, overflow: "hidden" }}>
 
-            {/* Tags */}
-            <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "20px" }}>
-              <span style={{ fontSize: "11px", color: "var(--text-dim)", flexShrink: 0 }}>Tags</span>
-              <input value={active.tags} onChange={(e) => updateNote({ tags: e.target.value })}
-                placeholder="follow-up, strategy, ideas..."
-                style={{ ...base, fontSize: "12px", color: "var(--text-secondary)", borderBottom: "1px solid var(--border)", padding: "2px 4px" }}
+            {/* Writing area */}
+            <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px", minWidth: 0 }}>
+              {/* Title */}
+              <input ref={titleRef} value={active.title} onChange={(e) => updateNote({ title: e.target.value })}
+                placeholder="Note title..."
+                style={{ ...base, fontSize: "24px", fontWeight: 700, letterSpacing: "-0.01em", marginBottom: "8px", display: "block" }}
               />
+
+              {/* Tags */}
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "20px" }}>
+                <span style={{ fontSize: "11px", color: "var(--text-dim)", flexShrink: 0 }}>Tags</span>
+                <input value={active.tags} onChange={(e) => updateNote({ tags: e.target.value })}
+                  placeholder="follow-up, strategy, ideas..."
+                  style={{ ...base, fontSize: "12px", color: "var(--text-secondary)", borderBottom: "1px solid var(--border)", padding: "2px 4px" }}
+                />
+              </div>
+
+              {/* Content */}
+              <textarea value={active.content} onChange={(e) => updateNote({ content: e.target.value })}
+                placeholder="Start writing... (drag & drop files anywhere)"
+                style={{ ...base, resize: "none", fontSize: "15px", lineHeight: 1.8, minHeight: "200px", display: "block" } as React.CSSProperties}
+                rows={Math.max(8, (active.content.match(/\n/g)?.length ?? 0) + 3)}
+              />
+
+              {/* File error */}
+              {fileErr && (
+                <div style={{ margin: "10px 0", fontSize: "12px", color: "#e05555", background: "rgba(224,85,85,0.08)", border: "1px solid rgba(224,85,85,0.2)", borderRadius: "6px", padding: "8px 12px" }}>
+                  ⚠ {fileErr}
+                </div>
+              )}
             </div>
 
-            {/* Content */}
-            <textarea value={active.content} onChange={(e) => updateNote({ content: e.target.value })}
-              placeholder="Start writing... (drag & drop files anywhere)"
-              style={{ ...base, resize: "none", fontSize: "15px", lineHeight: 1.8, minHeight: "200px", display: "block" } as React.CSSProperties}
-              rows={Math.max(8, (active.content.match(/\n/g)?.length ?? 0) + 3)}
-            />
-
-            {/* File error */}
-            {fileErr && (
-              <div style={{ margin: "10px 0", fontSize: "12px", color: "#e05555", background: "rgba(224,85,85,0.08)", border: "1px solid rgba(224,85,85,0.2)", borderRadius: "6px", padding: "8px 12px" }}>
-                ⚠ {fileErr}
-              </div>
-            )}
-
-            {/* Attachments */}
-            {active.files?.length > 0 && (
-              <div style={{ marginTop: "24px", borderTop: "1px solid var(--border)", paddingTop: "16px" }}>
-                <div style={{ fontSize: "11px", color: "var(--text-dim)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "12px" }}>
-                  Attachments ({active.files.length})
-                </div>
-
-                {/* Image grid */}
-                {active.files.filter((f) => f.type.startsWith("image/")).length > 0 && (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "12px" }}>
-                    {active.files.filter((f) => f.type.startsWith("image/")).map((f) => (
-                      <div key={f.id} style={{ position: "relative", borderRadius: "6px", overflow: "hidden", border: "1px solid var(--border)" }}>
-                        <img src={f.data} alt={f.name}
-                          style={{ width: "120px", height: "90px", objectFit: "cover", display: "block", cursor: "pointer" }}
-                          onClick={() => downloadFile(f)}
-                          title={`${f.name} (${formatSize(f.size)}) — click to download`}
-                        />
-                        <button onClick={() => removeFile(f.id)}
-                          style={{ position: "absolute", top: "4px", right: "4px", background: "rgba(0,0,0,0.7)", border: "none", borderRadius: "50%", width: "18px", height: "18px", color: "#fff", fontSize: "10px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}
-                        >✕</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Non-image files */}
-                {active.files.filter((f) => !f.type.startsWith("image/")).map((f) => (
-                  <div key={f.id}
-                    style={{ display: "flex", alignItems: "center", gap: "10px", padding: "8px 12px", background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "6px", marginBottom: "6px" }}
-                  >
-                    <span style={{ fontSize: "18px" }}>
-                      {f.type.includes("pdf") ? "📄" : f.type.includes("word") || f.name.endsWith(".docx") ? "📝" : f.type.includes("sheet") || f.name.endsWith(".xlsx") ? "📊" : "📁"}
-                    </span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: "13px", color: "var(--text-primary)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</div>
-                      <div style={{ fontSize: "11px", color: "var(--text-dim)" }}>{formatSize(f.size)}</div>
-                    </div>
-                    <button onClick={() => downloadFile(f)}
-                      style={{ fontSize: "12px", padding: "3px 10px", borderRadius: "4px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-secondary)", cursor: "pointer" }}
-                      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "var(--amber)"; (e.currentTarget as HTMLElement).style.color = "var(--amber)"; }}
-                      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "var(--border)"; (e.currentTarget as HTMLElement).style.color = "var(--text-secondary)"; }}
-                    >↓ Download</button>
-                    <button onClick={() => removeFile(f.id)}
-                      style={{ background: "none", border: "none", color: "var(--text-dim)", fontSize: "13px", cursor: "pointer", padding: "2px 4px" }}
-                      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "#e05555"; }}
-                      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "var(--text-dim)"; }}
-                    >✕</button>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         </div>
       ) : (

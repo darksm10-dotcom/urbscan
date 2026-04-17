@@ -353,16 +353,6 @@ function WhatsAppComposer({ phone, leadName, senderName, senderCompany, onSender
     setFormMode("none");
   }
 
-  function deleteTemplate(id: string) {
-    const updated = templates.filter((t) => t.id !== id);
-    if (updated.length === 0) return;
-    setTemplates(updated);
-    persistTemplates(updated);
-    if (activeTemplate === id) {
-      applyTemplate(updated[0].id, localName, localCompany, updated);
-    }
-  }
-
   async function handleSend() {
     if (files.length > 0 && typeof navigator.share === "function" && navigator.canShare?.({ files, text })) {
       try {
@@ -455,13 +445,6 @@ function WhatsAppComposer({ phone, leadName, senderName, senderCompany, onSender
             title="Edit template"
             style={{ background: "transparent", border: `1px solid var(--border)`, borderRadius: "2px", color: WA_GREEN, fontSize: "13px", padding: "4px 8px", cursor: "pointer", lineHeight: 1, fontFamily: "'JetBrains Mono', monospace" }}
           >✎</button>
-          {templates.length > 1 && (
-            <button
-              onClick={() => deleteTemplate(activeTemplate)}
-              title="Delete template"
-              style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: "2px", color: "var(--text-dim)", fontSize: "13px", padding: "4px 8px", cursor: "pointer", lineHeight: 1, fontFamily: "'JetBrains Mono', monospace" }}
-            >✕</button>
-          )}
           <button
             onClick={formMode === "new" ? () => setFormMode("none") : openNewForm}
             style={{
@@ -681,6 +664,20 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showLogContact, setShowLogContact] = useState<string | null>(null);
   const [logForm, setLogForm] = useState<{ method: ContactLog["method"]; note: string; followUpAt: string }>({ method: "whatsapp", note: "", followUpAt: "" });
+  const [customPhones, setCustomPhones] = useState<Record<string, string>>(() => {
+    if (typeof window === "undefined") return {};
+    try { return JSON.parse(localStorage.getItem("urbscan_custom_phones") ?? "{}"); } catch { return {}; }
+  });
+  const [editingPhone, setEditingPhone] = useState<string | null>(null);
+  const [phoneInput, setPhoneInput] = useState("");
+
+  function saveCustomPhone(buildingId: string, phone: string) {
+    setCustomPhones((prev) => {
+      const next = { ...prev, [buildingId]: phone };
+      localStorage.setItem("urbscan_custom_phones", JSON.stringify(next));
+      return next;
+    });
+  }
 
   function handleSenderChange(name: string, company: string) {
     setSenderName(name);
@@ -1089,20 +1086,53 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
                 >
                   {/* Phone + WhatsApp */}
                   <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center", marginBottom: "10px" }}>
-                    {b.phone ? (
-                      <>
-                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                          <span style={{ fontSize: "13px", color: "var(--text-dim)" }}>☎</span>
-                          <a href={`tel:${b.phone}`} style={{ fontSize: "13px", color: "var(--amber)", textDecoration: "none", fontWeight: 500 }}>{b.phone}</a>
-                          <button onClick={() => navigator.clipboard.writeText(b.phone!)} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: "2px", padding: "1px 6px", color: "var(--text-dim)", fontSize: "15px", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}>复制</button>
-                        </div>
+                    {/* Google phone (read-only) */}
+                    {b.phone && (
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        <span style={{ fontSize: "13px", color: "var(--text-dim)" }}>☎</span>
+                        <a href={`tel:${b.phone}`} style={{ fontSize: "13px", color: "var(--amber)", textDecoration: "none", fontWeight: 500 }}>{b.phone}</a>
+                        <button onClick={() => navigator.clipboard.writeText(b.phone!)} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: "2px", padding: "1px 6px", color: "var(--text-dim)", fontSize: "15px", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}>复制</button>
+                      </div>
+                    )}
+                    {/* Custom WhatsApp number */}
+                    {editingPhone === b.id ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        <span style={{ fontSize: "13px", color: "#25d366" }}>💬</span>
+                        <input
+                          autoFocus
+                          value={phoneInput}
+                          onChange={(e) => setPhoneInput(e.target.value)}
+                          placeholder="+60123456789"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && phoneInput.trim()) { saveCustomPhone(b.id, phoneInput.trim()); setEditingPhone(null); }
+                            if (e.key === "Escape") setEditingPhone(null);
+                          }}
+                          style={{ background: "transparent", border: "none", borderBottom: "1px solid #25d366", color: "var(--text-primary)", fontSize: "13px", padding: "2px 4px", outline: "none", fontFamily: "'JetBrains Mono', monospace", width: "150px" }}
+                        />
+                        <button onClick={() => { if (phoneInput.trim()) { saveCustomPhone(b.id, phoneInput.trim()); setEditingPhone(null); } }} style={{ background: "rgba(37,211,102,0.1)", border: "1px solid rgba(37,211,102,0.4)", borderRadius: "2px", padding: "1px 8px", color: "#25d366", fontSize: "13px", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}>✓</button>
+                        <button onClick={() => setEditingPhone(null)} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: "2px", padding: "1px 6px", color: "var(--text-dim)", fontSize: "13px", cursor: "pointer" }}>✕</button>
+                      </div>
+                    ) : customPhones[b.id] ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        <span style={{ fontSize: "13px", color: "#25d366" }}>💬</span>
+                        <span style={{ fontSize: "13px", color: "#25d366", fontWeight: 500 }}>{customPhones[b.id]}</span>
+                        <button onClick={() => navigator.clipboard.writeText(customPhones[b.id])} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: "2px", padding: "1px 6px", color: "var(--text-dim)", fontSize: "15px", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}>复制</button>
+                        <button onClick={() => { setEditingPhone(b.id); setPhoneInput(customPhones[b.id]); }} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: "2px", padding: "1px 6px", color: "var(--text-dim)", fontSize: "13px", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}>✎</button>
                         <button
                           onClick={() => setShowComposer(showComposer === b.id ? null : b.id)}
                           style={{ fontSize: "13px", color: "#25d366", background: showComposer === b.id ? "rgba(37,211,102,0.12)" : "transparent", border: "1px solid rgba(37,211,102,0.3)", borderRadius: "2px", padding: "2px 8px", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.04em" }}
-                        >💬 WhatsApp</button>
-                      </>
+                        >WhatsApp</button>
+                      </div>
                     ) : (
-                      <span style={{ fontSize: "15px", color: "var(--text-dim)" }}>☎ 无电话</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        {b.phone && (
+                          <button
+                            onClick={() => setShowComposer(showComposer === b.id ? null : b.id)}
+                            style={{ fontSize: "13px", color: "#25d366", background: showComposer === b.id ? "rgba(37,211,102,0.12)" : "transparent", border: "1px solid rgba(37,211,102,0.3)", borderRadius: "2px", padding: "2px 8px", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.04em" }}
+                          >💬 WhatsApp</button>
+                        )}
+                        <button onClick={() => { setEditingPhone(b.id); setPhoneInput(""); }} style={{ fontSize: "13px", color: "var(--text-dim)", background: "transparent", border: "1px solid var(--border)", borderRadius: "2px", padding: "2px 8px", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}>💬 + {b.phone ? "添加另一个号码" : "添加 WhatsApp"}</button>
+                      </div>
                     )}
                     {b.website && (
                       <a href={b.website} target="_blank" rel="noopener noreferrer"
@@ -1112,9 +1142,9 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
                   </div>
 
                   {/* WhatsApp Composer */}
-                  {showComposer === b.id && b.phone && (
+                  {showComposer === b.id && (customPhones[b.id] ?? b.phone) && (
                     <WhatsAppComposer
-                      phone={b.phone}
+                      phone={customPhones[b.id] ?? b.phone!}
                       leadName={b.name}
                       senderName={senderName}
                       senderCompany={senderCompany}
