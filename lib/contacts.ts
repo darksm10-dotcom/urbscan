@@ -38,8 +38,15 @@ export function getContactsForBuilding(buildingId: string): ContactLog[] {
 }
 
 export function addContact(log: Omit<ContactLog, "id">): ContactLog {
+  const existing = load();
+  // Deduplicate: skip if same building + same method logged within the last 2 minutes
+  const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+  const recent = existing.find(
+    (c) => c.buildingId === log.buildingId && c.method === log.method && c.contactedAt > twoMinutesAgo
+  );
+  if (recent) return recent;
   const entry: ContactLog = { ...log, id: crypto.randomUUID() };
-  save([entry, ...load()]);
+  save([entry, ...existing]);
   notify();
   return entry;
 }

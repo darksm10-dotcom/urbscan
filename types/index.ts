@@ -6,6 +6,7 @@ export interface PipelineEntry {
   status: LeadStatus;
   note: string;
   updatedAt: string;
+  noteUpdatedAt?: string;
 }
 
 export interface ContactLog {

@@ -2,11 +2,11 @@
 
 import { useState, useMemo, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
-import { Building, CompanyEnrichment, HunterContact, LeadStatus, PipelineEntry, SearchParams } from "@/types";
+import { Building, CompanyEnrichment, HunterContact, LeadStatus, PipelineEntry, SearchParams, ContactLog } from "@/types";
 import { optimizeRoute, totalRouteDistance } from "@/lib/route";
 import { getPipelineData, setLeadStatus, setLeadNote } from "@/lib/pipeline";
 import { addContact, updateContact, getContactsForBuilding } from "@/lib/contacts";
-import { ContactLog } from "@/types";
+import { STATUS_META } from "@/lib/constants";
 
 const BuildingMap = dynamic(() => import("./BuildingMap"), { ssr: false });
 
@@ -24,13 +24,6 @@ type SortMode = "score" | "distance" | "type" | "route";
 
 interface ScoreWeights { count: number; rating: number; proximity: number; }
 
-const STATUS_META: Record<LeadStatus, { label: string; color: string; bg: string }> = {
-  new:       { label: "新线索", color: "var(--text-dim)",    bg: "transparent" },
-  contacted: { label: "已联系", color: "var(--amber)",       bg: "rgba(212,160,60,0.08)" },
-  following: { label: "跟进中", color: "var(--cyan)",         bg: "rgba(0,212,168,0.06)" },
-  won:       { label: "成交",   color: "var(--green-bright)", bg: "rgba(90,138,74,0.08)" },
-  lost:      { label: "放弃",   color: "#c07070",            bg: "rgba(180,60,60,0.08)" },
-};
 
 function formatDistance(m: number): string {
   return m < 1000 ? `${m}m` : `${(m / 1000).toFixed(2)}km`;
@@ -134,13 +127,13 @@ function gmapsLink(b: Building): string {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(b.name + " " + b.address)}`;
 }
 
-function ScoreBadge({ score }: { score: number }) {
+function ScoreBadge({ score, breakdown }: { score: number; breakdown?: string }) {
   const isHigh = score >= 70;
   const isMed  = score >= 40;
   const color  = isHigh ? "#7ab86a" : isMed ? "var(--amber)" : "var(--text-dim)";
   const label  = isHigh ? "HIGH" : isMed ? "MED" : "LOW";
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: "6px" }} title={breakdown}>
       <div style={{ position: "relative", width: "34px", height: "34px", display: "flex", alignItems: "center", justifyContent: "center" }}>
         {/* Sonar ping rings for HIGH leads */}
         {isHigh && <>
@@ -250,27 +243,22 @@ interface ComposerProps {
 function WhatsAppComposer({ phone, leadName, senderName, senderCompany, onSenderChange, onClose }: ComposerProps) {
   const phoneDigits = phone.replace(/\D/g, "");
   const storageKey = `wa_draft_${phoneDigits}`;
-  const [templates, setTemplates] = useState<WaTemplate[]>(() => loadTemplates());
-  const [activeTemplate, setActiveTemplate] = useState(() => {
-    const list = loadTemplates();
-    // Per-phone first, then global last used, then first template
-    const perPhone = loadPhoneTemplateId(phoneDigits);
-    const lastGlobal = loadLastTemplateId();
-    const id = perPhone || lastGlobal;
-    return list.find((t) => t.id === id)?.id ?? list[0]?.id ?? "";
-  });
-  const [text, setText] = useState(() => {
-    if (typeof window === "undefined") return "";
-    const saved = localStorage.getItem(storageKey);
-    if (saved) return saved;
-    // No saved draft — render the per-phone template (or global last)
+  const [{ templates: initTemplates, activeId: initActiveId, text: initText }] = useState(() => {
     const list = loadTemplates();
     const perPhone = loadPhoneTemplateId(phoneDigits);
     const lastGlobal = loadLastTemplateId();
-    const id = perPhone || lastGlobal;
+    const id = list.find((t) => t.id === (perPhone || lastGlobal))?.id ?? list[0]?.id ?? "";
+    const saved = typeof window !== "undefined" ? localStorage.getItem(storageKey) : null;
     const t = list.find((tmpl) => tmpl.id === id) ?? list[0];
-    return t ? interpolateTemplate(t.body, leadName, senderName, senderCompany) : "";
+    return {
+      templates: list,
+      activeId: id,
+      text: saved ?? (t ? interpolateTemplate(t.body, leadName, senderName, senderCompany) : ""),
+    };
   });
+  const [templates, setTemplates] = useState<WaTemplate[]>(initTemplates);
+  const [activeTemplate, setActiveTemplate] = useState(initActiveId);
+  const [text, setText] = useState(initText);
   const [draftSaved, setDraftSaved] = useState(false);
   const [localName, setLocalName] = useState(senderName);
   const [localCompany, setLocalCompany] = useState(senderCompany);
@@ -279,7 +267,6 @@ function WhatsAppComposer({ phone, leadName, senderName, senderCompany, onSender
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Template management state
-  const [hoveredTab, setHoveredTab] = useState<string | null>(null);
   const [formMode, setFormMode] = useState<"none" | "new" | "edit">("none");
   const [formLabel, setFormLabel] = useState("");
   const [formBody, setFormBody] = useState("");
@@ -440,64 +427,53 @@ function WhatsAppComposer({ phone, leadName, senderName, senderCompany, onSender
 
       <div style={{ padding: "12px" }}>
 
-        {/* Template tabs + New button */}
-        <div style={{ display: "flex", gap: "4px", marginBottom: formMode !== "none" ? "8px" : "10px", flexWrap: "wrap", alignItems: "center" }}>
-          {templates.map((t) => {
-            const isActive = activeTemplate === t.id;
-            const isHovered = hoveredTab === t.id;
-            return (
-              <div
-                key={t.id}
-                style={{ position: "relative", display: "inline-flex" }}
-                onMouseEnter={() => setHoveredTab(t.id)}
-                onMouseLeave={() => setHoveredTab(null)}
-              >
-                <button
-                  onClick={() => applyTemplate(t.id, localName, localCompany)}
-                  style={{
-                    fontSize: "15px",
-                    padding: `3px ${isHovered ? "44px" : "10px"} 3px 10px`,
-                    borderRadius: "2px",
-                    border: `1px solid ${isActive ? WA_GREEN : "var(--border)"}`,
-                    background: isActive ? "rgba(37,211,102,0.1)" : "transparent",
-                    color: isActive ? WA_GREEN : "var(--text-secondary)",
-                    cursor: "pointer",
-                    fontFamily: "'JetBrains Mono', monospace",
-                    transition: "padding 0.1s",
-                    whiteSpace: "nowrap",
-                  }}
-                >{t.label}</button>
-                {isHovered && (
-                  <div style={{ position: "absolute", right: "3px", top: "50%", transform: "translateY(-50%)", display: "flex", gap: "1px", pointerEvents: "all" }}>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); openEditForm(t); }}
-                      title="Edit template"
-                      style={{ background: "none", border: "none", cursor: "pointer", color: WA_GREEN, fontSize: "11px", padding: "2px 3px", lineHeight: 1, opacity: 0.8 }}
-                    >✎</button>
-                    {templates.length > 1 && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); deleteTemplate(t.id); }}
-                        title="Delete template"
-                        style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-dim)", fontSize: "11px", padding: "2px 3px", lineHeight: 1, opacity: 0.7 }}
-                      >✕</button>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+        {/* Template selector row */}
+        <div style={{ display: "flex", gap: "6px", marginBottom: formMode !== "none" ? "8px" : "10px", alignItems: "center" }}>
+          <select
+            value={activeTemplate}
+            onChange={(e) => applyTemplate(e.target.value, localName, localCompany)}
+            style={{
+              flex: 1,
+              background: "rgba(37,211,102,0.06)",
+              border: `1px solid ${WA_GREEN}`,
+              borderRadius: "2px",
+              color: WA_GREEN,
+              fontSize: "13px",
+              padding: "4px 8px",
+              fontFamily: "'JetBrains Mono', monospace",
+              cursor: "pointer",
+              outline: "none",
+              minWidth: 0,
+            }}
+          >
+            {templates.map((t) => (
+              <option key={t.id} value={t.id}>{t.label}</option>
+            ))}
+          </select>
+          <button
+            onClick={() => { const t = templates.find((t) => t.id === activeTemplate); if (t) openEditForm(t); }}
+            title="Edit template"
+            style={{ background: "transparent", border: `1px solid var(--border)`, borderRadius: "2px", color: WA_GREEN, fontSize: "13px", padding: "4px 8px", cursor: "pointer", lineHeight: 1, fontFamily: "'JetBrains Mono', monospace" }}
+          >✎</button>
+          {templates.length > 1 && (
+            <button
+              onClick={() => deleteTemplate(activeTemplate)}
+              title="Delete template"
+              style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: "2px", color: "var(--text-dim)", fontSize: "13px", padding: "4px 8px", cursor: "pointer", lineHeight: 1, fontFamily: "'JetBrains Mono', monospace" }}
+            >✕</button>
+          )}
           <button
             onClick={formMode === "new" ? () => setFormMode("none") : openNewForm}
             style={{
-              fontSize: "15px",
-              padding: "3px 10px",
+              fontSize: "13px",
+              padding: "4px 10px",
               borderRadius: "2px",
               border: `1px solid ${formMode === "new" ? WA_GREEN : "var(--border)"}`,
               background: formMode === "new" ? "rgba(37,211,102,0.1)" : "transparent",
               color: formMode === "new" ? WA_GREEN : "var(--text-dim)",
               cursor: "pointer",
               fontFamily: "'JetBrains Mono', monospace",
-              transition: "all 0.15s",
+              whiteSpace: "nowrap",
             }}
           >+ New</button>
         </div>
@@ -631,20 +607,33 @@ function EmptyState({ message, sub }: { message: string; sub?: string }) {
   );
 }
 
-function exportCSV(buildings: Building[], pipeline: Record<string, PipelineEntry>, hunterData: Record<string, { contacts?: HunterContact[] }>) {
+function exportCSV(
+  buildings: Building[],
+  pipeline: Record<string, PipelineEntry>,
+  hunterData: Record<string, { contacts?: HunterContact[] }>,
+  enrichData: Record<string, { data?: CompanyEnrichment }>,
+) {
   const rows: string[] = [];
-  rows.push("序号,企业名称,地址,类型,线索评分,Google评分,评论数,电话,网站,距离(m),纬度,经度,跟进状态,备注,联系人姓名,职位,邮箱,邮箱置信度");
+  rows.push("序号,企业名称,地址,类型,线索评分,Google评分,评论数,电话,网站,距离(m),纬度,经度,跟进状态,备注,员工数,行业,年收入,LinkedIn,联系人姓名,职位,邮箱,邮箱置信度");
   buildings.forEach((b, i) => {
     const p = pipeline[b.id];
     const status = p?.status ?? "new";
     const note = (p?.note ?? "").replace(/"/g, '""');
     const contacts = hunterData[b.id]?.contacts ?? [];
+    const enrich = enrichData[b.id]?.data;
+    const apolloCols = [
+      `"${enrich?.employees ?? ""}"`,
+      `"${enrich?.industry ?? ""}"`,
+      `"${enrich?.annualRevenue ?? ""}"`,
+      `"${enrich?.linkedinUrl ?? ""}"`,
+    ].join(",");
+    const baseRow = (rowIdx: number) => `${rowIdx === 0 ? i + 1 : ""},"${rowIdx === 0 ? b.name : ""}","${rowIdx === 0 ? b.address : ""}","${rowIdx === 0 ? (b.type === "office" ? "写字楼" : "住宅") : ""}",${rowIdx === 0 ? b.score : ""},${rowIdx === 0 ? (b.rating ?? "") : ""},${rowIdx === 0 ? (b.reviewCount ?? "") : ""},"${rowIdx === 0 ? (b.phone ?? "") : ""}","${rowIdx === 0 ? (b.website ?? "") : ""}",${rowIdx === 0 ? b.distance : ""},${rowIdx === 0 ? b.lat : ""},${rowIdx === 0 ? b.lng : ""},${rowIdx === 0 ? STATUS_META[status].label : ""},"${rowIdx === 0 ? note : ""}",${rowIdx === 0 ? apolloCols : ",,,"}`;
     if (contacts.length === 0) {
-      rows.push(`${i + 1},"${b.name}","${b.address}","${b.type === "office" ? "写字楼" : "住宅"}",${b.score},${b.rating ?? ""},${b.reviewCount ?? ""},"${b.phone ?? ""}","${b.website ?? ""}",${b.distance},${b.lat},${b.lng},${STATUS_META[status].label},"${note}",,,,`);
+      rows.push(`${baseRow(0)},,,,`);
     } else {
       contacts.forEach((c, ci) => {
         const name = [c.firstName, c.lastName].filter(Boolean).join(" ");
-        rows.push(`${ci === 0 ? i + 1 : ""},"${ci === 0 ? b.name : ""}","${ci === 0 ? b.address : ""}","${ci === 0 ? (b.type === "office" ? "写字楼" : "住宅") : ""}",${ci === 0 ? b.score : ""},${ci === 0 ? (b.rating ?? "") : ""},${ci === 0 ? (b.reviewCount ?? "") : ""},"${ci === 0 ? (b.phone ?? "") : ""}","${ci === 0 ? (b.website ?? "") : ""}",${ci === 0 ? b.distance : ""},${ci === 0 ? b.lat : ""},${ci === 0 ? b.lng : ""},${ci === 0 ? STATUS_META[status].label : ""},"${ci === 0 ? note : ""}","${name}","${c.position ?? ""}","${c.email}",${c.confidence}`);
+        rows.push(`${baseRow(ci)},"${name}","${c.position ?? ""}","${c.email}",${c.confidence}`);
       });
     }
   });
@@ -690,6 +679,8 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
   const [statusFilter, setStatusFilter] = useState<"all" | LeadStatus>("all");
   const [bulkMode, setBulkMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showLogContact, setShowLogContact] = useState<string | null>(null);
+  const [logForm, setLogForm] = useState<{ method: ContactLog["method"]; note: string; followUpAt: string }>({ method: "whatsapp", note: "", followUpAt: "" });
 
   function handleSenderChange(name: string, company: string) {
     setSenderName(name);
@@ -841,6 +832,26 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
     setSelectedIds(new Set());
   }
 
+  function handleLogContactSubmit(b: Building) {
+    addContact({
+      buildingId: b.id,
+      buildingName: b.name,
+      buildingAddress: b.address,
+      buildingPhone: b.phone,
+      method: logForm.method,
+      note: logForm.note,
+      contactedAt: new Date().toISOString(),
+      followUpAt: logForm.followUpAt || undefined,
+      followUpDone: false,
+    });
+    setContactLogs((prev) => ({ ...prev, [b.id]: getContactsForBuilding(b.id) }));
+    if ((pipeline[b.id]?.status ?? "new") === "new") {
+      handleStatusChange(b, "contacted");
+    }
+    setShowLogContact(null);
+    setLogForm({ method: "whatsapp", note: "", followUpAt: "" });
+  }
+
   if (loading) {
     return (
       <div style={{ animation: "fadeSlideIn 0.3s ease" }}>
@@ -979,7 +990,7 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
               title="批量查找所有有网站的企业联系人"
             >⬡ 批量联系人</button>
           )}
-          <button onClick={() => exportCSV(sorted, pipeline, hunterData)}
+          <button onClick={() => exportCSV(sorted, pipeline, hunterData, enrichData)}
             style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: "3px", padding: "4px 12px", color: "var(--text-secondary)", fontSize: "13px", letterSpacing: "0.1em", textTransform: "uppercase", cursor: "pointer", transition: "all 0.15s", fontFamily: "'JetBrains Mono', monospace" }}
             onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--amber)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--amber)"; }}
             onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--border)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--text-secondary)"; }}
@@ -1051,7 +1062,13 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
                   </div>
                   <div style={{ fontSize: "13px", color: "var(--text-dim)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{b.address}</div>
                 </div>
-                <div style={{ alignSelf: "center" }}><ScoreBadge score={b.score} /></div>
+                <div style={{ alignSelf: "center" }}><ScoreBadge score={b.score} breakdown={(() => {
+                  const total = weights.count + weights.rating + weights.proximity;
+                  const countPct  = Math.round(Math.min(1, (b.reviewCount ?? 0) / 200) * weights.count / total * 100);
+                  const ratingPct = Math.round((b.rating ? (b.rating - 1) / 4 : 0) * weights.rating / total * 100);
+                  const proxPct   = b.score - countPct - ratingPct;
+                  return `评论数: +${countPct}分 (${b.reviewCount ?? 0}条)\n评级: +${ratingPct}分 (${(b.rating ?? 0).toFixed(1)}★)\n距离: +${proxPct}分 (${b.distance}m)`;
+                })()} /></div>
                 <div style={{ alignSelf: "center" }}>
                   <StarRating rating={b.rating} />
                   {b.reviewCount ? <div style={{ fontSize: "15px", color: "var(--text-dim)", marginTop: "2px" }}>{b.reviewCount}条</div> : null}
@@ -1110,10 +1127,62 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
                   <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center", marginBottom: "12px" }}>
                     <a href={gmapsLink(b)} target="_blank" rel="noopener noreferrer" style={{ fontSize: "13px", color: "var(--amber)", border: "1px solid var(--border-bright)", borderRadius: "2px", padding: "2px 10px", textDecoration: "none" }}>↗ Google Maps</a>
                     <a href={linkedinSearchLink(b.name)} target="_blank" rel="noopener noreferrer" style={{ fontSize: "13px", color: "var(--cyan)", border: "1px solid rgba(0,212,168,0.3)", borderRadius: "2px", padding: "2px 10px", textDecoration: "none" }}>in LinkedIn</a>
+                    <button
+                      onClick={() => setShowLogContact(showLogContact === b.id ? null : b.id)}
+                      style={{ fontSize: "13px", color: showLogContact === b.id ? "var(--cyan)" : "var(--text-secondary)", background: "transparent", border: `1px solid ${showLogContact === b.id ? "var(--cyan)" : "var(--border)"}`, borderRadius: "2px", padding: "2px 10px", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}
+                    >+ 记录跟进</button>
                     <span style={{ fontSize: "15px", color: "var(--text-dim)", letterSpacing: "0.04em" }}>
                     ◈ <span style={{ color: "var(--cyan-dim)" }}>{b.lat.toFixed(5)}</span>, <span style={{ color: "var(--cyan-dim)" }}>{b.lng.toFixed(5)}</span> · {b.distance}m
                   </span>
                   </div>
+
+                  {/* Inline Log Contact form */}
+                  {showLogContact === b.id && (
+                    <div style={{ marginBottom: "12px", padding: "10px 12px", border: "1px solid rgba(0,212,168,0.25)", borderRadius: "3px", background: "rgba(0,212,168,0.03)", animation: "fadeSlideIn 0.15s ease" }}>
+                      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "flex-end" }}>
+                        <div>
+                          <div style={{ fontSize: "11px", color: "var(--text-dim)", marginBottom: "4px", letterSpacing: "0.08em" }}>方式</div>
+                          <select
+                            value={logForm.method}
+                            onChange={(e) => setLogForm({ ...logForm, method: e.target.value as ContactLog["method"] })}
+                            style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "2px", color: "var(--text-primary)", fontSize: "13px", padding: "3px 6px", fontFamily: "'JetBrains Mono', monospace", outline: "none" }}
+                          >
+                            <option value="whatsapp">💬 WhatsApp</option>
+                            <option value="call">📞 Call</option>
+                            <option value="email">✉ Email</option>
+                            <option value="visit">🏢 Visit</option>
+                            <option value="other">◈ Other</option>
+                          </select>
+                        </div>
+                        <div style={{ flex: 1, minWidth: "140px" }}>
+                          <div style={{ fontSize: "11px", color: "var(--text-dim)", marginBottom: "4px", letterSpacing: "0.08em" }}>备注</div>
+                          <input
+                            value={logForm.note}
+                            onChange={(e) => setLogForm({ ...logForm, note: e.target.value })}
+                            placeholder="简短备注..."
+                            style={{ width: "100%", background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "2px", color: "var(--text-primary)", fontSize: "13px", padding: "3px 7px", fontFamily: "'JetBrains Mono', monospace", outline: "none", boxSizing: "border-box" }}
+                          />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: "11px", color: "var(--text-dim)", marginBottom: "4px", letterSpacing: "0.08em" }}>跟进日期</div>
+                          <input
+                            type="date"
+                            value={logForm.followUpAt}
+                            onChange={(e) => setLogForm({ ...logForm, followUpAt: e.target.value })}
+                            style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "2px", color: "var(--text-primary)", fontSize: "13px", padding: "3px 6px", fontFamily: "'JetBrains Mono', monospace", outline: "none" }}
+                          />
+                        </div>
+                        <button
+                          onClick={() => handleLogContactSubmit(b)}
+                          style={{ fontSize: "13px", padding: "4px 14px", borderRadius: "2px", border: "1px solid var(--cyan)", background: "rgba(0,212,168,0.1)", color: "var(--cyan)", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", whiteSpace: "nowrap" }}
+                        >✓ 保存</button>
+                        <button
+                          onClick={() => setShowLogContact(null)}
+                          style={{ fontSize: "13px", padding: "4px 10px", borderRadius: "2px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-dim)", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}
+                        >✕</button>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Contact history (auto-synced) */}
                   {contactLogs[b.id]?.length > 0 && (
@@ -1160,6 +1229,11 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
                     onChange={(e) => setNotes((prev) => ({ ...prev, [b.id]: e.target.value }))}
                     style={{ width: "100%", background: "rgba(212,160,60,0.03)", border: "1px solid var(--border)", borderRadius: "3px", padding: "8px 10px", color: "var(--text-primary)", fontSize: "15px", fontFamily: "'JetBrains Mono', monospace", resize: "vertical", minHeight: "56px", outline: "none", lineHeight: 1.5 }}
                   />
+                  {pEntry?.noteUpdatedAt && (
+                    <div style={{ fontSize: "11px", color: "var(--text-dim)", marginTop: "3px", letterSpacing: "0.04em" }}>
+                      备注更新于 {new Date(pEntry.noteUpdatedAt).toLocaleString("en-MY", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                    </div>
+                  )}
 
                   {/* Hunter results */}
                   {hunterData[b.id] && (

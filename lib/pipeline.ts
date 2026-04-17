@@ -27,6 +27,12 @@ export function setLeadStatus(id: string, status: LeadStatus): void {
 
 export function setLeadNote(id: string, note: string): void {
   const data = load();
-  data[id] = { status: data[id]?.status ?? "new", note, updatedAt: new Date().toISOString() };
+  const now = new Date().toISOString();
+  data[id] = {
+    status: data[id]?.status ?? "new",
+    note,
+    updatedAt: data[id]?.updatedAt ?? now,
+    noteUpdatedAt: now,
+  };
   save(data);
 }
