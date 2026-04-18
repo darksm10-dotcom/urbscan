@@ -12,8 +12,9 @@ const SearchPanel   = dynamic(() => import("@/components/SearchPanel"),   { ssr:
 const ResultsList   = dynamic(() => import("@/components/ResultsList"),   { ssr: false });
 const ContactsPanel = dynamic(() => import("@/components/ContactsPanel"), { ssr: false });
 const NotesPanel    = dynamic(() => import("@/components/NotesPanel"),    { ssr: false });
+const TodayPanel    = dynamic(() => import("@/components/TodayPanel"),    { ssr: false });
 
-type AppTab = "scan" | "contacts" | "notes";
+type AppTab = "today" | "scan" | "contacts" | "notes";
 
 export default function Home() {
   const [buildings, setBuildings] = useState<Building[]>([]);
@@ -100,6 +101,7 @@ export default function Home() {
         {/* Nav tabs */}
         <div style={{ display: "flex", gap: "4px" }}>
           {([
+            { tab: "today",    label: "Today" },
             { tab: "scan",     label: "Scan" },
             { tab: "contacts", label: "Contacts" },
             { tab: "notes",    label: "Notes" },
@@ -151,7 +153,11 @@ export default function Home() {
 
       {/* ── Main layout ────────────────────────────────── */}
       <main style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        {activeTab === "scan" ? (
+        {activeTab === "today" ? (
+          <section style={{ flex: 1, display: "flex", minHeight: 0, overflow: "auto" }}>
+            <TodayPanel onGoToContacts={() => setActiveTab("contacts")} />
+          </section>
+        ) : activeTab === "scan" ? (
           <>
             <aside
               className="sidebar"
