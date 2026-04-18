@@ -292,6 +292,8 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
   const [showWeights, setShowWeights] = useState(false);
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchProgress, setBatchProgress] = useState({ done: 0, total: 0 });
+  const [batchScrapeRunning, setBatchScrapeRunning] = useState(false);
+  const [batchScrapeProgress, setBatchScrapeProgress] = useState({ done: 0, total: 0 });
   const [showComposer, setShowComposer] = useState<string | null>(null); // buildingId
   const [contactLogs, setContactLogs] = useState<Record<string, ContactLog[]>>({});
   const [senderName, setSenderName] = useState<string>(() => (typeof window !== "undefined" ? localStorage.getItem("urbscan_sender_name") ?? "" : ""));
@@ -453,6 +455,24 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
     }
     setBatchRunning(false);
   }, [buildings, hunterData, batchRunning]);
+
+  const handleBatchScrape = useCallback(async () => {
+    const targets = buildings.filter((b) => b.website && !scrapeData[b.id]);
+    if (!targets.length || batchScrapeRunning) return;
+    setBatchScrapeRunning(true);
+    setBatchScrapeProgress({ done: 0, total: targets.length });
+    for (const b of targets) {
+      try {
+        const emails = await fetchScrapedEmails(b.website!);
+        setScrapeData((prev) => ({ ...prev, [b.id]: { loading: false, emails } }));
+      } catch {
+        setScrapeData((prev) => ({ ...prev, [b.id]: { loading: false, emails: [] } }));
+      }
+      setBatchScrapeProgress((prev) => ({ ...prev, done: prev.done + 1 }));
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    setBatchScrapeRunning(false);
+  }, [buildings, scrapeData, batchScrapeRunning]);
 
   function toggleRow(id: string) {
     if (bulkMode) { toggleSelect(id); return; }
@@ -646,6 +666,19 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
               onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--border)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--text-secondary)"; }}
               title="批量查找所有有网站的企业联系人"
             >⬡ 批量联系人</button>
+          )}
+          {batchScrapeRunning ? (
+            <span style={{ fontSize: "13px", color: "var(--text-secondary)" }}>
+              <span style={{ animation: "spinnerRotate 1s linear infinite", display: "inline-block", marginRight: "4px" }}>◌</span>
+              {batchScrapeProgress.done}/{batchScrapeProgress.total}
+            </span>
+          ) : (
+            buildings.some((b) => b.website && !scrapeData[b.id]) && (
+              <button onClick={handleBatchScrape}
+                style={{ fontSize: "13px", background: "rgba(100,180,255,0.08)", border: "1px solid rgba(100,180,255,0.4)", borderRadius: "2px", padding: "2px 10px", color: "#64b4ff", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.06em" }}>
+                @ 批量抓取
+              </button>
+            )
           )}
           <button onClick={() => exportCSV(sorted, pipeline, hunterData, enrichData)}
             style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: "3px", padding: "4px 12px", color: "var(--text-secondary)", fontSize: "13px", letterSpacing: "0.1em", textTransform: "uppercase", cursor: "pointer", transition: "all 0.15s", fontFamily: "'JetBrains Mono', monospace" }}
