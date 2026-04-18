@@ -10,6 +10,7 @@ function notify(): void {
 }
 
 export function onTasksChanged(handler: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
   window.addEventListener(EVENT, handler);
   return () => window.removeEventListener(EVENT, handler);
 }

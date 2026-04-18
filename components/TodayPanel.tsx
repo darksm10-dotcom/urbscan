@@ -8,7 +8,22 @@ import { ContactLog } from "@/types";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-function TaskRow({ task, onToggle, onDelete }: { task: Task; onToggle: () => void; onDelete: () => void }) {
+interface TaskRowProps {
+  task: Task;
+  onToggle: () => void;
+  onDelete: () => void;
+}
+
+interface FollowUpCardProps {
+  contact: ContactLog;
+  onGoToContacts: () => void;
+}
+
+interface TodayPanelProps {
+  onGoToContacts: () => void;
+}
+
+function TaskRow({ task, onToggle, onDelete }: TaskRowProps) {
   const isOverdue = task.date < today() && !task.done;
   return (
     <div style={{
@@ -66,7 +81,7 @@ function TaskRow({ task, onToggle, onDelete }: { task: Task; onToggle: () => voi
   );
 }
 
-function FollowUpCard({ contact, onGoToContacts }: { contact: ContactLog; onGoToContacts: () => void }) {
+function FollowUpCard({ contact, onGoToContacts }: FollowUpCardProps) {
   const methodLabel: Record<ContactLog["method"], string> = {
     whatsapp: "WhatsApp",
     call: "Call",
@@ -112,18 +127,18 @@ function FollowUpCard({ contact, onGoToContacts }: { contact: ContactLog; onGoTo
   );
 }
 
-export default function TodayPanel({ onGoToContacts }: { onGoToContacts: () => void }) {
-  const todayStr = today();
+export default function TodayPanel({ onGoToContacts }: TodayPanelProps) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [followUps, setFollowUps] = useState<ContactLog[]>([]);
   const [title, setTitle] = useState("");
-  const [date, setDate] = useState(todayStr);
+  const [date, setDate] = useState(() => today());
 
   const refreshTasks = useCallback(() => {
+    const todayStr = today();
     const all = getTasks();
     // Show tasks due today or overdue (date <= today), including done tasks from today
     setTasks(all.filter((t) => t.date <= todayStr));
-  }, [todayStr]);
+  }, []);
 
   const refreshFollowUps = useCallback(() => {
     setFollowUps(getOverdueFollowUps());
@@ -145,7 +160,7 @@ export default function TodayPanel({ onGoToContacts }: { onGoToContacts: () => v
     if (!trimmed) return;
     addTask({ title: trimmed, date, done: false });
     setTitle("");
-    setDate(todayStr);
+    setDate(today());
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
