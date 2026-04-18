@@ -4,6 +4,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { useTheme } from "@/components/ThemeSwitcher";
 import dynamic from "next/dynamic";
 import { exportBackup, importBackup } from "@/lib/backup";
+import { saveLastScan, loadLastScan } from "@/lib/scan-cache";
 import { Building, SearchParams } from "@/types";
 import { searchNearbyBuildings } from "@/lib/places";
 import { pushHistory } from "@/lib/history";
@@ -30,6 +31,15 @@ export default function Home() {
   const [todayCount, setTodayCount] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
   useTheme();
+
+  useEffect(() => {
+    const snapshot = loadLastScan();
+    if (snapshot && snapshot.buildings.length > 0) {
+      setBuildings(snapshot.buildings);
+      setLastParams(snapshot.params);
+      setSearched(true);
+    }
+  }, []);
 
   useEffect(() => {
     const update = () => setOverdueCount(getOverdueFollowUps().length);
@@ -63,6 +73,7 @@ export default function Home() {
     try {
       const results = await searchNearbyBuildings(params, controller.signal);
       setBuildings(results);
+      saveLastScan(results, params);
       params.locations.forEach((loc) => pushHistory({ address: loc.address, lat: loc.lat, lng: loc.lng }));
     } catch (err) {
       if ((err as Error).name === "AbortError") return;
