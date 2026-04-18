@@ -88,3 +88,11 @@ export interface HunterContact {
   linkedin?: string;
   confidence: number;
 }
+
+export interface Task {
+  id: string;
+  title: string;
+  date: string;      // YYYY-MM-DD
+  done: boolean;
+  createdAt: string; // ISO datetime
+}
