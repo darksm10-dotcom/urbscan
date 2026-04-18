@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useTheme } from "@/components/ThemeSwitcher";
 import dynamic from "next/dynamic";
+import { exportBackup, importBackup } from "@/lib/backup";
 import { Building, SearchParams } from "@/types";
 import { searchNearbyBuildings } from "@/lib/places";
 import { pushHistory } from "@/lib/history";
@@ -266,6 +267,31 @@ export default function Home() {
           Urbscan © 2026
         </span>
       </footer>
+
+      {/* Backup row */}
+      <div style={{ display: "flex", gap: "8px", alignItems: "center", padding: "6px 16px", borderTop: "1px solid var(--border)", background: "var(--bg-card)", flexShrink: 0 }}>
+        <button
+          onClick={exportBackup}
+          style={{ fontSize: "11px", padding: "3px 10px", borderRadius: "4px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-dim)", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}
+        >
+          ↓ 备份
+        </button>
+        <label style={{ fontSize: "11px", padding: "3px 10px", borderRadius: "4px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-dim)", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}>
+          ↑ 恢复
+          <input type="file" accept=".json" style={{ display: "none" }} onChange={async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            try {
+              const count = await importBackup(file);
+              alert(`已恢复 ${count} 项数据，页面将刷新`);
+              window.location.reload();
+            } catch (err) {
+              alert(err instanceof Error ? err.message : "恢复失败");
+            }
+            e.target.value = "";
+          }} />
+        </label>
+      </div>
 
       <style>{`
         @media (max-width: 768px) {
