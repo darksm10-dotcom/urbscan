@@ -263,6 +263,13 @@ export default function ContactsPanel() {
     if (expandedId === id) { setExpandedId(null); setEditForm(null); }
   }
 
+  function handleMarkAllOverdueDone() {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    contacts
+      .filter((c) => !c.followUpDone && c.followUpAt && c.followUpAt < todayStr)
+      .forEach((c) => updateContact(c.id, { followUpDone: true }));
+  }
+
   function toggleSort(col: SortCol) {
     if (sortCol === col) setSortAsc((v) => !v);
     else { setSortCol(col); setSortAsc(true); }
@@ -352,6 +359,26 @@ export default function ContactsPanel() {
         <StatCard label="成交"   value={stats.won}       color="#7ab86a" />
         <StatCard label="逾期"   value={stats.overdue}   color={stats.overdue > 0 ? "#e05555" : "var(--text-dim)"} />
       </div>
+
+      {stats.overdue > 0 && (
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "16px" }}>
+          <button
+            onClick={handleMarkAllOverdueDone}
+            style={{
+              fontSize: "12px",
+              padding: "5px 14px",
+              borderRadius: "6px",
+              border: "1px solid rgba(224,85,85,0.4)",
+              background: "rgba(224,85,85,0.08)",
+              color: "#e05555",
+              cursor: "pointer",
+              fontFamily: "var(--font-ui)",
+            }}
+          >
+            ✓ Mark all {stats.overdue} overdue done
+          </button>
+        </div>
+      )}
 
       {/* Region filter */}
       <div style={{ marginBottom: "12px" }}>
