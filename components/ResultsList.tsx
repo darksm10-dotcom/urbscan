@@ -249,6 +249,36 @@ async function fetchEnrichment(website: string): Promise<CompanyEnrichment> {
   return data.enrichment as CompanyEnrichment;
 }
 
+function PipelineStats({ buildings, pipeline }: { buildings: Building[]; pipeline: Record<string, PipelineEntry> }) {
+  const counts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const b of buildings) {
+      const s = pipeline[b.id]?.status ?? "new";
+      c[s] = (c[s] ?? 0) + 1;
+    }
+    return c;
+  }, [buildings, pipeline]);
+
+  const nonNew = Object.entries(counts).filter(([k, v]) => k !== "new" && v > 0);
+  if (nonNew.length === 0 || buildings.length === 0) return null;
+
+  return (
+    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", padding: "8px 0", borderBottom: "1px solid var(--border)", marginBottom: "8px" }}>
+      {(Object.keys(STATUS_META) as LeadStatus[]).map((s) => {
+        const count = counts[s] ?? 0;
+        if (count === 0) return null;
+        const meta = STATUS_META[s];
+        return (
+          <div key={s} style={{ display: "flex", alignItems: "center", gap: "4px", padding: "2px 8px", borderRadius: "4px", background: meta.bg, border: `1px solid ${meta.color}30` }}>
+            <span style={{ fontSize: "13px", fontWeight: 700, color: meta.color }}>{count}</span>
+            <span style={{ fontSize: "11px", color: meta.color, letterSpacing: "0.06em" }}>{meta.label}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function ResultsList({ buildings, loading, error, searched, lastParams, selectedId, onSelectId }: ResultsListProps) {
   const [sortMode, setSortMode] = useState<SortMode>("distance");
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -678,6 +708,8 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
           </div>
         ))}
       </div>
+
+      <PipelineStats buildings={buildings} pipeline={pipeline} />
 
       {/* Rows */}
       <div>
