@@ -32,12 +32,6 @@ export function getTasks(): Task[] {
   return load().sort((a, b) => a.date.localeCompare(b.date));
 }
 
-export function getTasksForDate(date: string): Task[] {
-  return load()
-    .filter((t) => t.date === date)
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-}
-
 export function addTask(data: Omit<Task, "id" | "createdAt">): Task {
   const task: Task = {
     ...data,

@@ -1,10 +1,9 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { Task } from "@/types";
+import { Task, ContactLog } from "@/types";
 import { getTasks, addTask, toggleTask, deleteTask, onTasksChanged } from "@/lib/tasks";
 import { getOverdueFollowUps, onContactsChanged } from "@/lib/contacts";
-import { ContactLog } from "@/types";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -137,7 +136,7 @@ export default function TodayPanel({ onGoToContacts }: TodayPanelProps) {
     const todayStr = today();
     const all = getTasks();
     // Show tasks due today or overdue (date <= today), including done tasks from today
-    setTasks(all.filter((t) => t.date <= todayStr));
+    setTasks(all.filter((t) => t.date <= todayStr && (!t.done || t.date === todayStr)));
   }, []);
 
   const refreshFollowUps = useCallback(() => {
