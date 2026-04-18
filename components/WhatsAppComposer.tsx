@@ -1,7 +1,13 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import { WaTemplate, loadTemplates, persistTemplates, loadLastTemplateId, saveLastTemplateId, loadPhoneTemplateId, savePhoneTemplateId, interpolateTemplate } from "@/lib/wa-templates";
+
+const UNFILLED_RE = /\{[a-zA-Z]+\}/g;
+
+function findUnfilledVars(text: string): string[] {
+  return [...new Set(text.match(UNFILLED_RE) ?? [])];
+}
 
 function whatsappLink(phone: string): string {
   return `https://wa.me/${phone.replace(/\D/g, "")}`;
@@ -44,6 +50,8 @@ export default function WhatsAppComposer({ phone, leadName, senderName, senderCo
   const [files, setFiles] = useState<File[]>([]);
   const [copied, setCopied] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const unfilledVars = useMemo(() => findUnfilledVars(text), [text]);
 
   // Template management state
   const [formMode, setFormMode] = useState<"none" | "new" | "edit">("none");
@@ -310,6 +318,21 @@ export default function WhatsAppComposer({ phone, leadName, senderName, senderCo
             </div>
           )}
         </div>
+
+        {/* Unfilled variable warning */}
+        {unfilledVars.length > 0 && (
+          <div style={{
+            padding: "6px 10px",
+            borderRadius: "4px",
+            background: "rgba(239,68,68,0.08)",
+            border: "1px solid rgba(239,68,68,0.3)",
+            fontSize: "12px",
+            color: "#ef4444",
+            marginBottom: "8px",
+          }}>
+            ⚠ 未填变量: {unfilledVars.join(", ")}
+          </div>
+        )}
 
         {/* Action buttons */}
         <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
