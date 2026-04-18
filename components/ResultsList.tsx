@@ -235,6 +235,13 @@ async function fetchContacts(website: string): Promise<HunterContact[]> {
   return data.contacts as HunterContact[];
 }
 
+async function fetchScrapedEmails(website: string): Promise<string[]> {
+  const res = await fetch("/api/scrape-emails", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ website }) });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? "抓取失败");
+  return data.emails as string[];
+}
+
 async function fetchEnrichment(website: string): Promise<CompanyEnrichment> {
   const res = await fetch("/api/enrich", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ website }) });
   const data = await res.json();
@@ -248,6 +255,7 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
   const [pipeline, setPipeline] = useState<Record<string, PipelineEntry>>(() => getPipelineData());
   const [showUnvisited, setShowUnvisited] = useState(false);
   const [hunterData, setHunterData] = useState<Record<string, { loading: boolean; contacts?: HunterContact[]; error?: string }>>({});
+  const [scrapeData, setScrapeData] = useState<Record<string, { loading: boolean; emails?: string[]; error?: string }>>({});
   const [enrichData, setEnrichData] = useState<Record<string, { loading: boolean; data?: CompanyEnrichment; error?: string }>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [weights, setWeights] = useState<ScoreWeights>({ count: 4, rating: 4, proximity: 2 });
@@ -269,6 +277,9 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
   });
   const [editingPhone, setEditingPhone] = useState<string | null>(null);
   const [phoneInput, setPhoneInput] = useState("");
+  const [filterPhone, setFilterPhone] = useState(false);
+  const [filterWebsite, setFilterWebsite] = useState(false);
+  const [filterEmail, setFilterEmail] = useState(false);
 
   function saveCustomPhone(buildingId: string, phone: string) {
     setCustomPhones((prev) => {
@@ -311,6 +322,15 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
       default:         return list;
     }
   }, [buildingsWithScore, sortMode, pipeline, showUnvisited, primaryCenter, statusFilter]);
+
+  const filtered = useMemo(() => {
+    return sorted.filter((b) => {
+      if (filterPhone && !b.phone) return false;
+      if (filterWebsite && !b.website) return false;
+      if (filterEmail && !(scrapeData[b.id]?.emails?.length || hunterData[b.id]?.contacts?.length)) return false;
+      return true;
+    });
+  }, [sorted, filterPhone, filterWebsite, filterEmail, scrapeData, hunterData]);
 
   const routeTotal = useMemo(() => {
     if (sortMode !== "route" || !primaryCenter || sorted.length === 0) return null;
@@ -361,6 +381,17 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
       setHunterData((prev) => ({ ...prev, [b.id]: { loading: false, contacts } }));
     } catch (err) {
       setHunterData((prev) => ({ ...prev, [b.id]: { loading: false, error: err instanceof Error ? err.message : "查询失败" } }));
+    }
+  }
+
+  async function handleScrapeLookup(b: Building) {
+    if (!b.website || scrapeData[b.id]) return;
+    setScrapeData((prev) => ({ ...prev, [b.id]: { loading: true } }));
+    try {
+      const emails = await fetchScrapedEmails(b.website);
+      setScrapeData((prev) => ({ ...prev, [b.id]: { loading: false, emails } }));
+    } catch (err) {
+      setScrapeData((prev) => ({ ...prev, [b.id]: { loading: false, error: err instanceof Error ? err.message : "抓取失败" } }));
     }
   }
 
@@ -486,7 +517,7 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
       {/* Map */}
       {primaryCenter && (
         <div style={{ marginBottom: "16px" }}>
-          <BuildingMap buildings={sorted} center={primaryCenter} selectedId={selectedId} onSelectId={onSelectId} />
+          <BuildingMap buildings={filtered} center={primaryCenter} selectedId={selectedId} onSelectId={onSelectId} />
         </div>
       )}
 
@@ -594,6 +625,25 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
         </div>
       </div>
 
+      {/* Filter chips */}
+      <div style={{ display: "flex", gap: "4px", flexWrap: "wrap", alignItems: "center", marginBottom: "6px" }}>
+        <span style={{ fontSize: "11px", color: "var(--text-dim)", letterSpacing: "0.15em", marginRight: "2px" }}>筛选</span>
+        {([
+          { key: "phone",   label: "有电话",  active: filterPhone,   set: setFilterPhone },
+          { key: "website", label: "有网站",  active: filterWebsite, set: setFilterWebsite },
+          { key: "email",   label: "有邮件",  active: filterEmail,   set: setFilterEmail },
+        ] as { key: string; label: string; active: boolean; set: (v: boolean) => void }[]).map(({ key, label, active, set }) => (
+          <button key={key} onClick={() => set(!active)}
+            style={{ background: active ? "rgba(212,160,60,0.12)" : "transparent", border: `1px solid ${active ? "var(--amber)" : "var(--border)"}`, borderRadius: "3px", padding: "3px 10px", color: active ? "var(--amber)" : "var(--text-secondary)", fontSize: "11px", letterSpacing: "0.08em", cursor: "pointer", transition: "all 0.15s", fontFamily: "'JetBrains Mono', monospace" }}
+          >{label}</button>
+        ))}
+        {(filterPhone || filterWebsite || filterEmail) && (
+          <span style={{ fontSize: "11px", color: "var(--text-dim)" }}>
+            {filtered.length} / {sorted.length} 条
+          </span>
+        )}
+      </div>
+
       {/* Weight sliders */}
       {showWeights && (
         <div style={{ padding: "12px 14px", border: "1px solid var(--border)", borderRadius: "3px", background: "var(--bg-card)", marginBottom: "8px", animation: "fadeSlideIn 0.2s ease" }}>
@@ -631,7 +681,7 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
 
       {/* Rows */}
       <div>
-        {sorted.map((b, i) => {
+        {filtered.map((b, i) => {
           const isExpanded = expandedId === b.id;
           const isSelected = selectedId === b.id;
           const pEntry = pipeline[b.id];
@@ -835,6 +885,9 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
                     {b.website && !hunterData[b.id] && (
                       <button onClick={() => handleHunterLookup(b)} style={{ fontSize: "13px", background: "rgba(212,160,60,0.08)", border: "1px solid var(--amber)", borderRadius: "2px", padding: "2px 10px", color: "var(--amber)", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.06em" }}>⬡ 联系人</button>
                     )}
+                    {b.website && !scrapeData[b.id] && (
+                      <button onClick={() => handleScrapeLookup(b)} style={{ fontSize: "13px", background: "rgba(100,180,255,0.08)", border: "1px solid rgba(100,180,255,0.4)", borderRadius: "2px", padding: "2px 10px", color: "#64b4ff", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.06em" }}>@ 抓取邮件</button>
+                    )}
                     {b.website && !enrichData[b.id] && (
                       <button onClick={() => handleEnrichLookup(b)} style={{ fontSize: "13px", background: "rgba(0,212,168,0.08)", border: "1px solid rgba(0,212,168,0.4)", borderRadius: "2px", padding: "2px 10px", color: "var(--cyan)", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.06em" }}>◈ 公司增强</button>
                     )}
@@ -875,6 +928,22 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
                     </div>
                   )}
 
+                  {/* Scraped emails */}
+                  {scrapeData[b.id] && (
+                    <div style={{ marginTop: "12px" }}>
+                      <div style={{ fontSize: "15px", color: "var(--text-dim)", letterSpacing: "0.2em", textTransform: "uppercase", marginBottom: "8px" }}>@ 网站邮件</div>
+                      {scrapeData[b.id].loading && <div style={{ fontSize: "15px", color: "var(--text-dim)", display: "flex", alignItems: "center", gap: "6px" }}><span style={{ animation: "spinnerRotate 1s linear infinite", display: "inline-block" }}>◌</span>正在抓取...</div>}
+                      {scrapeData[b.id].error && <div style={{ fontSize: "15px", color: "#b85050" }}>✕ {scrapeData[b.id].error}</div>}
+                      {scrapeData[b.id].emails?.length === 0 && <div style={{ fontSize: "15px", color: "var(--text-dim)" }}>网站上未找到公开邮件</div>}
+                      {scrapeData[b.id].emails?.map((email) => (
+                        <div key={email} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+                          <a href={`mailto:${email}`} style={{ fontSize: "15px", color: "#64b4ff", textDecoration: "none" }}>{email}</a>
+                          <button onClick={() => navigator.clipboard.writeText(email)} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: "2px", padding: "1px 6px", color: "var(--text-dim)", fontSize: "15px", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}>复制</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {/* Apollo enrichment results */}
                   {enrichData[b.id] && (
                     <div style={{ marginTop: "12px" }}>
@@ -891,7 +960,7 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
       </div>
 
       <div style={{ marginTop: "12px", padding: "8px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontSize: "13px", color: "var(--text-dim)", letterSpacing: "0.12em" }}>显示 {sorted.length} / {buildings.length} 条线索</span>
+        <span style={{ fontSize: "13px", color: "var(--text-dim)", letterSpacing: "0.12em" }}>显示 {filtered.length} / {buildings.length} 条线索</span>
         <span style={{ fontSize: "13px", color: "var(--text-dim)", letterSpacing: "0.12em" }}>{sortMode === "route" ? "OPTIMIZED ROUTE" : `SORTED BY ${sortMode.toUpperCase()}`}</span>
       </div>
     </div>
