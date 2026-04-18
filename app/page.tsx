@@ -7,6 +7,7 @@ import { Building, SearchParams } from "@/types";
 import { searchNearbyBuildings } from "@/lib/places";
 import { pushHistory } from "@/lib/history";
 import { getOverdueFollowUps, onContactsChanged } from "@/lib/contacts";
+import { getTasks, onTasksChanged } from "@/lib/tasks";
 
 const SearchPanel   = dynamic(() => import("@/components/SearchPanel"),   { ssr: false });
 const ResultsList   = dynamic(() => import("@/components/ResultsList"),   { ssr: false });
@@ -23,8 +24,9 @@ export default function Home() {
   const [searched, setSearched] = useState(false);
   const [lastParams, setLastParams] = useState<SearchParams | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<AppTab>("scan");
+  const [activeTab, setActiveTab] = useState<AppTab>("today");
   const [overdueCount, setOverdueCount] = useState(0);
+  const [todayCount, setTodayCount] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
   useTheme();
 
@@ -32,6 +34,18 @@ export default function Home() {
     const update = () => setOverdueCount(getOverdueFollowUps().length);
     update();
     return onContactsChanged(update);
+  }, []);
+
+  useEffect(() => {
+    const update = () => {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const pending = getTasks().filter((t) => t.date <= todayStr && !t.done).length;
+      setTodayCount(pending + getOverdueFollowUps().length);
+    };
+    update();
+    const unsubTasks = onTasksChanged(update);
+    const unsubContacts = onContactsChanged(update);
+    return () => { unsubTasks(); unsubContacts(); };
   }, []);
 
   const handleSearch = useCallback(async (params: SearchParams) => {
@@ -124,6 +138,25 @@ export default function Home() {
               }}
             >
               {label}
+              {tab === "today" && todayCount > 0 && (
+                <span style={{
+                  position: "absolute",
+                  top: "4px",
+                  right: "8px",
+                  background: "var(--amber)",
+                  color: "#000",
+                  fontSize: "9px",
+                  borderRadius: "50%",
+                  width: "16px",
+                  height: "16px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontWeight: 700,
+                }}>
+                  {todayCount > 99 ? "99+" : todayCount}
+                </span>
+              )}
               {tab === "contacts" && overdueCount > 0 && (
                 <span style={{
                   position: "absolute",

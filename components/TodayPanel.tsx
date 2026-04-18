@@ -154,6 +154,23 @@ export default function TodayPanel({ onGoToContacts }: TodayPanelProps) {
     };
   }, [refreshTasks, refreshFollowUps]);
 
+  useEffect(() => {
+    function scheduleRefresh() {
+      const now = new Date();
+      const midnight = new Date(now);
+      midnight.setHours(24, 0, 0, 0);
+      const msUntilMidnight = midnight.getTime() - now.getTime();
+      const timer = setTimeout(() => {
+        refreshTasks();
+        refreshFollowUps();
+        scheduleRefresh();
+      }, msUntilMidnight);
+      return timer;
+    }
+    const timer = scheduleRefresh();
+    return () => clearTimeout(timer);
+  }, [refreshTasks, refreshFollowUps]);
+
   function handleAdd() {
     const trimmed = title.trim();
     if (!trimmed) return;
