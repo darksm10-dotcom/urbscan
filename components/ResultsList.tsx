@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useRef } from "react";
+import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { Building, CompanyEnrichment, HunterContact, LeadStatus, PipelineEntry, SearchParams, ContactLog } from "@/types";
 import { optimizeRoute, totalRouteDistance } from "@/lib/route";
@@ -288,7 +288,13 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
   const [scrapeData, setScrapeData] = useState<Record<string, { loading: boolean; emails?: string[]; error?: string }>>({});
   const [enrichData, setEnrichData] = useState<Record<string, { loading: boolean; data?: CompanyEnrichment; error?: string }>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
-  const [weights, setWeights] = useState<ScoreWeights>({ count: 4, rating: 4, proximity: 2 });
+  const [weights, setWeights] = useState<ScoreWeights>(() => {
+    if (typeof window === "undefined") return { count: 4, rating: 4, proximity: 2 };
+    try {
+      const saved = localStorage.getItem("urbscan_score_weights");
+      return saved ? JSON.parse(saved) : { count: 4, rating: 4, proximity: 2 };
+    } catch { return { count: 4, rating: 4, proximity: 2 }; }
+  });
   const [showWeights, setShowWeights] = useState(false);
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchProgress, setBatchProgress] = useState({ done: 0, total: 0 });
@@ -312,6 +318,10 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
   const [filterPhone, setFilterPhone] = useState(false);
   const [filterWebsite, setFilterWebsite] = useState(false);
   const [filterEmail, setFilterEmail] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem("urbscan_score_weights", JSON.stringify(weights));
+  }, [weights]);
 
   function saveCustomPhone(buildingId: string, phone: string) {
     setCustomPhones((prev) => {
@@ -587,6 +597,27 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
           </div>
         ))}
       </div>
+
+      {/* Contact coverage strip */}
+      {(() => {
+        const withPhone   = buildings.filter((b) => b.phone).length;
+        const withWebsite = buildings.filter((b) => b.website).length;
+        const withEmail   = buildings.filter((b) => scrapeData[b.id]?.emails?.length || hunterData[b.id]?.contacts?.length).length;
+        return (
+          <div style={{ display: "flex", gap: "16px", marginBottom: "12px", padding: "6px 12px", border: "1px solid var(--border)", borderRadius: "3px", background: "var(--bg-card)", flexWrap: "wrap" }}>
+            <span style={{ fontSize: "11px", color: "var(--text-dim)", letterSpacing: "0.15em" }}>联系覆盖</span>
+            <span style={{ fontSize: "11px", color: withPhone > 0 ? "var(--amber)" : "var(--text-dim)" }}>
+              📞 {withPhone}/{buildings.length} 有电话
+            </span>
+            <span style={{ fontSize: "11px", color: withWebsite > 0 ? "var(--cyan)" : "var(--text-dim)" }}>
+              🌐 {withWebsite}/{buildings.length} 有官网
+            </span>
+            <span style={{ fontSize: "11px", color: withEmail > 0 ? "var(--green-bright)" : "var(--text-dim)" }}>
+              ✉ {withEmail}/{buildings.length} 已获邮箱
+            </span>
+          </div>
+        );
+      })()}
 
       {/* Status Filter Bar */}
       <div style={{ display: "flex", alignItems: "center", gap: "4px", marginBottom: "6px", flexWrap: "wrap" }}>

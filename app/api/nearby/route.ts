@@ -1,54 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Industry, SearchLocation } from "@/types";
+import { INDUSTRY_KEYWORDS } from "@/lib/keywords";
 
 const TEXT_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText";
-
-// Industry-specific keyword groups — each runs in parallel
-const INDUSTRY_KEYWORDS: Record<Industry, string[]> = {
-  all: [
-    "company office corporate headquarters",
-    "business enterprise services",
-    "professional services firm",
-  ],
-  tech: [
-    "IT company software technology",
-    "tech startup digital agency",
-    "data center cloud computing cybersecurity",
-  ],
-  finance: [
-    "bank financial services investment",
-    "insurance accounting audit firm",
-    "fund management securities",
-  ],
-  legal: [
-    "law firm legal services advocate",
-    "solicitor chambers legal consultant",
-  ],
-  healthcare: [
-    "clinic medical specialist hospital",
-    "pharmaceutical biotech medical device",
-  ],
-  manufacturing: [
-    "factory manufacturing industrial production",
-    "engineering plant assembly",
-  ],
-  logistics: [
-    "logistics warehouse freight shipping",
-    "courier supply chain distribution",
-  ],
-  telco: [
-    "telecommunications internet service provider broadband",
-    "ISP network infrastructure telco",
-  ],
-  consulting: [
-    "consulting advisory management services",
-    "strategy firm HR outsourcing",
-  ],
-  trading: [
-    "trading wholesale distributor import export",
-    "retail chain general trading",
-  ],
-};
 
 // Types that indicate consumer/non-B2B places — filter these out
 const EXCLUDE_TYPES = new Set([
@@ -62,8 +16,11 @@ const EXCLUDE_TYPES = new Set([
   "gas_station", "car_dealer", "car_repair", "car_wash",
   "church", "mosque", "temple", "place_of_worship",
   "primary_school", "secondary_school", "school",
-  "atm", "bank" // exclude retail bank branches unless finance industry
+  "atm",
 ]);
+
+// Only exclude bank type for non-finance industries (bank HQs are valid finance leads)
+const FINANCE_INDUSTRIES = new Set<Industry>(["finance"]);
 
 const OFFICE_NAME_KEYWORDS = [
   "tower", "menara", "wisma", "plaza", "centre", "center", "office",
@@ -107,17 +64,20 @@ function inferType(name: string, types: string[]): "office" | "residential" {
   return "office";
 }
 
-function isBusiness(types: string[], name: string): boolean {
+function isBusiness(types: string[], name: string, industry: Industry): boolean {
   if (types.some((t) => EXCLUDE_TYPES.has(t))) return false;
+  // Only exclude bank branches for non-finance industries
+  if (!FINANCE_INDUSTRIES.has(industry) && types.includes("bank")) return false;
   // Must have at least one business-like type
   const businessTypes = [
     "establishment", "point_of_interest", "finance", "health",
     "real_estate_agency", "lawyer", "insurance_agency",
+    "corporate_office", "office",
   ];
   if (!types.some((t) => businessTypes.includes(t))) return false;
-  // Reject if name is obviously consumer-facing
+  // Reject only clearly consumer-facing names (kedai alone is too broad — "Kedai IT" is a valid B2B lead)
   const lower = name.toLowerCase();
-  const consumerWords = ["restaurant", "cafe", "kedai", "mamak", "kopitiam", "restaurant", "bistro", "eatery"];
+  const consumerWords = ["restaurant", "cafe", "mamak", "kopitiam", "bistro", "eatery", "kedai makan", "warung"];
   if (consumerWords.some((w) => lower.includes(w))) return false;
   return true;
 }
@@ -204,7 +164,7 @@ async function searchKeyword(
 
   const allPlaces: PlaceResult[] = [];
   let pageToken: string | undefined;
-  const MAX_PAGES = 5; // up to 100 results per keyword
+  const MAX_PAGES = 2; // up to 40 results per keyword
 
   for (let page = 0; page < MAX_PAGES; page++) {
     const payload = pageToken
@@ -227,11 +187,12 @@ export async function POST(req: NextRequest) {
   if (!apiKey) return NextResponse.json({ error: "API key not configured" }, { status: 500 });
 
   const body = await req.json();
-  const { locations, radius, industry, keyword } = body as {
+  const { locations, radius, industry, keyword, queries } = body as {
     locations: SearchLocation[];
     radius: number;
     industry: Industry;
     keyword: string;
+    queries?: string[]; // if provided, use directly (single-query incremental mode)
   };
 
   if (!locations?.length || !radius) {
@@ -240,9 +201,11 @@ export async function POST(req: NextRequest) {
 
   try {
     const industryKws = INDUSTRY_KEYWORDS[industry] ?? INDUSTRY_KEYWORDS.all;
-    const allKeywords = keyword?.trim()
-      ? [...industryKws, keyword.trim()]
-      : industryKws;
+    const allKeywords = queries?.length
+      ? queries
+      : keyword?.trim()
+        ? [...industryKws, keyword.trim()]
+        : industryKws;
 
     // Parallel search across all locations × all keywords
     const searches = locations.flatMap((loc) =>
@@ -261,7 +224,7 @@ export async function POST(req: NextRequest) {
         seen.add(p.id);
         const types = p.types ?? [];
         const name = p.displayName?.text ?? "";
-        return isBusiness(types, name);
+        return isBusiness(types, name, industry);
       })
       .map((p) => {
         const pLat = p.location?.latitude ?? 0;

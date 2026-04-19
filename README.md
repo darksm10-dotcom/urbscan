@@ -2,6 +2,8 @@
 
 > Find, score, track, and follow up on B2B leads near any location in Malaysia using Google Places + Hunter.io + website email scraping.
 
+![URBSCAN Preview](public/screenshots/preview.png)
+
 ---
 
 ## What It Does
@@ -32,12 +34,16 @@ URBSCAN is a B2B prospecting tool built for field sales teams in Malaysia. Enter
 
 ### Lead Discovery
 - **Google Places API (New)** — parallel keyword search across 10 industry verticals
+- **Incremental search results** — first leads appear in under 1s; results stream in as each keyword completes with live `(2/6)` progress counter
+- **Parallel address geocoding** — multiple locations resolved simultaneously, not sequentially
 - **Lead scoring** — ranked by activity (review count), rating, and proximity
-- **Adjustable score weights** — drag sliders to reprioritise by what matters to you
+- **Adjustable score weights** — drag sliders to reprioritise; settings persist across sessions
 - **Multi-location search** — scan up to 5 locations simultaneously
 - **Last scan restored on refresh** — results persist in localStorage, no re-scan needed
 - **Filter chips** — filter results by has-phone / has-website / has-email in one click
 - **Pipeline stats bar** — count per stage (New / Contacted / Following / Won / Lost) above the list
+- **Contact coverage bar** — shows phone / website / email counts at a glance
+- **Smarter B2B filtering** — industry-aware exclusions (e.g. banks kept for Finance searches), Malaysian business names handled correctly
 
 ### Industry Verticals
 `All` `Tech/IT` `Finance` `Telco` `Consulting` `Legal` `Healthcare` `Logistics` `Manufacturing` `Trading`

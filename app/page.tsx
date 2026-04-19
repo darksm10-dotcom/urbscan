@@ -6,7 +6,7 @@ import dynamic from "next/dynamic";
 import { exportBackup, importBackup } from "@/lib/backup";
 import { saveLastScan, loadLastScan } from "@/lib/scan-cache";
 import { Building, SearchParams } from "@/types";
-import { searchNearbyBuildings } from "@/lib/places";
+import { searchNearbyBuildingsIncremental } from "@/lib/places";
 import { pushHistory } from "@/lib/history";
 import { getOverdueFollowUps, onContactsChanged } from "@/lib/contacts";
 import { getTasks, onTasksChanged } from "@/lib/tasks";
@@ -29,6 +29,7 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<AppTab>("today");
   const [overdueCount, setOverdueCount] = useState(0);
   const [todayCount, setTodayCount] = useState(0);
+  const [searchProgress, setSearchProgress] = useState<{ done: number; total: number } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   useTheme();
 
@@ -69,10 +70,18 @@ export default function Home() {
     setSearched(true);
     setSelectedId(null);
     setLastParams(params);
+    setBuildings([]);
+    setSearchProgress(null);
 
     try {
-      const results = await searchNearbyBuildings(params, controller.signal);
-      setBuildings(results);
+      const results = await searchNearbyBuildingsIncremental(
+        params,
+        (done, total, partial) => {
+          setSearchProgress({ done, total });
+          setBuildings(partial);
+        },
+        controller.signal
+      );
       saveLastScan(results, params);
       params.locations.forEach((loc) => pushHistory({ address: loc.address, lat: loc.lat, lng: loc.lng }));
     } catch (err) {
@@ -81,6 +90,7 @@ export default function Home() {
       setBuildings([]);
     } finally {
       setLoading(false);
+      setSearchProgress(null);
     }
   }, []);
 
@@ -215,7 +225,7 @@ export default function Home() {
                 overflowY: "auto",
               }}
             >
-              <SearchPanel onSearch={handleSearch} loading={loading} />
+              <SearchPanel onSearch={handleSearch} loading={loading} searchProgress={searchProgress} />
             </aside>
             <section style={{
               flex: 1,

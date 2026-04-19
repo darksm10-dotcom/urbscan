@@ -11,6 +11,7 @@ interface Suggestion { description: string; mainText: string; secondary: string;
 interface SearchPanelProps {
   onSearch: (params: SearchParams) => void;
   loading: boolean;
+  searchProgress?: { done: number; total: number } | null;
 }
 
 const BUILDING_PRESETS: { icon: string; label: string; keyword: string; hint: string }[] = [
@@ -90,7 +91,7 @@ const inputBase: React.CSSProperties = {
   fontFamily: "var(--font-ui)",
 };
 
-export default function SearchPanel({ onSearch, loading }: SearchPanelProps) {
+export default function SearchPanel({ onSearch, loading, searchProgress }: SearchPanelProps) {
   const [locations, setLocations] = useState<Array<{ address: string; resolved?: SearchLocation }>>([{ address: "" }]);
   const [radius, setRadius] = useState(10000);
   const [customRadius, setCustomRadius] = useState("");
@@ -163,19 +164,18 @@ export default function SearchPanel({ onSearch, loading }: SearchPanelProps) {
   }
 
   async function resolveLocations(): Promise<SearchLocation[]> {
-    const resolved: SearchLocation[] = [];
-    for (const loc of locations) {
-      if (!loc.address.trim()) continue;
-      if (loc.resolved) { resolved.push(loc.resolved); continue; }
-      const coordMatch = loc.address.match(/^(-?\d+\.?\d*),\s*(-?\d+\.?\d*)$/);
-      if (coordMatch) {
-        resolved.push({ address: loc.address, lat: parseFloat(coordMatch[1]), lng: parseFloat(coordMatch[2]) });
-      } else {
+    const active = locations.filter((loc) => loc.address.trim());
+    return Promise.all(
+      active.map(async (loc) => {
+        if (loc.resolved) return loc.resolved;
+        const coordMatch = loc.address.match(/^(-?\d+\.?\d*),\s*(-?\d+\.?\d*)$/);
+        if (coordMatch) {
+          return { address: loc.address, lat: parseFloat(coordMatch[1]), lng: parseFloat(coordMatch[2]) };
+        }
         const coords = await geocodeAddress(loc.address);
-        resolved.push({ address: loc.address, ...coords });
-      }
-    }
-    return resolved;
+        return { address: loc.address, ...coords };
+      })
+    );
   }
 
   function handleRegion(region: typeof REGION_PRESETS[number]) {
@@ -540,7 +540,12 @@ export default function SearchPanel({ onSearch, loading }: SearchPanelProps) {
           onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = "scale(1)"; }}
         >
           {loading
-            ? <><span style={{ animation: "spinnerRotate 1s linear infinite", display: "inline-block" }}>◌</span> 扫描中...</>
+            ? <>
+                <span style={{ animation: "spinnerRotate 1s linear infinite", display: "inline-block" }}>◌</span>
+                {searchProgress
+                  ? ` 扫描中 (${searchProgress.done}/${searchProgress.total})`
+                  : " 扫描中..."}
+              </>
             : <>扫描 B2B 线索</>}
         </button>
       </div>
