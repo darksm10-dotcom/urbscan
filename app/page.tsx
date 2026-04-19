@@ -16,8 +16,9 @@ const ResultsList   = dynamic(() => import("@/components/ResultsList"),   { ssr:
 const ContactsPanel = dynamic(() => import("@/components/ContactsPanel"), { ssr: false });
 const NotesPanel    = dynamic(() => import("@/components/NotesPanel"),    { ssr: false });
 const TodayPanel    = dynamic(() => import("@/components/TodayPanel"),    { ssr: false });
+const EmailGenerator = dynamic(() => import("@/components/EmailGenerator"), { ssr: false });
 
-type AppTab = "today" | "scan" | "contacts" | "notes";
+type AppTab = "today" | "scan" | "contacts" | "notes" | "email";
 
 export default function Home() {
   const [buildings, setBuildings] = useState<Building[]>([]);
@@ -141,6 +142,7 @@ export default function Home() {
             { tab: "scan",     label: "Scan" },
             { tab: "contacts", label: "Contacts" },
             { tab: "notes",    label: "Notes" },
+            { tab: "email",    label: "Email" },
           ] as { tab: AppTab; label: string }[]).map(({ tab, label }) => (
             <button
               key={tab}
@@ -263,9 +265,13 @@ export default function Home() {
             </div>
             <ContactsPanel />
           </section>
-        ) : (
+        ) : activeTab === "notes" ? (
           <section style={{ flex: 1, display: "flex", minHeight: 0, overflow: "hidden" }}>
             <NotesPanel />
+          </section>
+        ) : (
+          <section style={{ flex: 1, overflowY: "auto", minWidth: 0 }}>
+            <EmailGenerator />
           </section>
         )}
       </main>
