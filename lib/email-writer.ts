@@ -74,9 +74,10 @@ Respond ONLY with valid JSON (no markdown, no code blocks):
   });
 
   const raw = response.choices[0]?.message?.content ?? "";
+  const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
 
   try {
-    return JSON.parse(raw) as EmailResult;
+    return JSON.parse(cleaned) as EmailResult;
   } catch {
     throw new Error(`DeepSeek returned invalid JSON: ${raw.slice(0, 200)}`);
   }
