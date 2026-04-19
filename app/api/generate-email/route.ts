@@ -5,12 +5,15 @@ import { generateEmail, EmailType, Language } from "@/lib/email-writer";
 export async function POST(req: NextRequest) {
   let url: string, emailType: EmailType, language: Language, productDescription: string;
 
+  let sellerPersona: string | undefined;
+
   try {
     const body = await req.json();
     url = body.url;
     emailType = body.emailType ?? "cold";
     language = body.language ?? "en";
     productDescription = body.productDescription ?? "";
+    sellerPersona = body.sellerPersona;
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
@@ -36,7 +39,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await generateEmail({ companyContent, emailType, language, productDescription });
+    const result = await generateEmail({ companyContent, emailType, language, productDescription, sellerPersona });
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Email generation failed";

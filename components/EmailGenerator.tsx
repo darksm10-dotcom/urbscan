@@ -7,6 +7,25 @@ const DEFAULT_PRODUCT =
   process.env.NEXT_PUBLIC_DEFAULT_PRODUCT ??
   "Enterprise connectivity solutions";
 
+const DEFAULT_SELLER_PERSONA = `你是InNET Technologies Sdn Bhd的资深B2B销售经理，拥有15年以上马来西亚电信与IT行业销售经验。你深入了解公司的所有产品、服务、差异化优势和客户案例，能够针对不同行业客户制定精准的销售策略。
+公司背景：
+InNET Technologies成立于2012年，从系统集成商（SI）起步，后拓展至电信领域。公司持有MCMC颁发的NSP和NFP牌照，是一家carrier-neutral的电信与IT一站式解决方案提供商。创始人Rick Ng带领团队完成超过300个项目，服务涵盖航空、金融、物流、酒店、房地产等多个行业。
+核心产品与服务：
+Connectivity Services — Carrier-neutral优势，可整合TM、TIME、NTT等多家运营商资源，为客户设计最优性价比方案
+Dedicated Internet Access (DIA) — 面向需要稳定高速互联网的企业
+Private Leased Line (Metro-E) — 多办公地点间的安全专线连接，承载数据、语音和视频
+International Ethernet Private Line (IEPL) — 跨境点对点专线，支持可扩展带宽
+Data Center Services — 位于KLCC和Cyberjaya，99.99% uptime保障
+IT System Integration — 网络集成、项目管理、云计算
+六大差异化卖点（核心武器）：
+One Stop Centre (Telco + IT) — 带宽和IT系统集成一站搞定，客户不用找两家供应商
+InTouch Support — 7×24小时优先技术支持，WhatsApp群直连网络工程师，不是打去call center排队
+Auto Bandwidth Monitoring — 自动监控带宽，95%拥塞持续5分钟即触发邮件告警，主动发现问题
+Bandwidth On Demand — 支持burstable带宽，按需临时升级，灵活应对业务峰值
+Hybrid Solution — 光纤+无线/宽带备份，实现近99.99% uptime
+Personalized Account Manager — 一个客户经理对接所有服务，不用被踢来踢去
+标杆客户：Qatar Airways, British Airways, CIMB, Alibaba, Lazada, Pos Malaysia, Mandarin Oriental, Al Jazeera等`;
+
 type LoadingStage = "scraping" | "writing" | null;
 
 export default function EmailGenerator() {
@@ -20,6 +39,13 @@ export default function EmailGenerator() {
   const [editedSubject, setEditedSubject] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [sellerPersona, setSellerPersona] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("sellerPersona") ?? DEFAULT_SELLER_PERSONA;
+    }
+    return DEFAULT_SELLER_PERSONA;
+  });
+  const [showPersona, setShowPersona] = useState(false);
 
   async function handleGenerate() {
     if (!url.trim()) return;
@@ -33,7 +59,7 @@ export default function EmailGenerator() {
       const res = await fetch("/api/generate-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: url.trim(), emailType, language, productDescription }),
+        body: JSON.stringify({ url: url.trim(), emailType, language, productDescription, sellerPersona }),
       });
       clearTimeout(timer);
       const data = await res.json();
@@ -50,6 +76,11 @@ export default function EmailGenerator() {
     } finally {
       setLoadingStage(null);
     }
+  }
+
+  function handlePersonaChange(value: string) {
+    setSellerPersona(value);
+    localStorage.setItem("sellerPersona", value);
   }
 
   function handleCopy() {
@@ -168,6 +199,44 @@ export default function EmailGenerator() {
             boxSizing: "border-box",
           }}
         />
+      </div>
+
+      <div style={{ marginBottom: "20px" }}>
+        <button
+          onClick={() => setShowPersona(!showPersona)}
+          style={{
+            background: "none",
+            border: "none",
+            padding: 0,
+            fontSize: "13px",
+            color: "var(--text-secondary)",
+            cursor: "pointer",
+            fontFamily: "var(--font-ui)",
+            textDecoration: "underline",
+          }}
+        >
+          {showPersona ? "Hide seller profile ▲" : "Edit seller profile ▼"}
+        </button>
+        {showPersona && (
+          <textarea
+            value={sellerPersona}
+            onChange={(e) => handlePersonaChange(e.target.value)}
+            rows={8}
+            style={{
+              marginTop: "8px",
+              width: "100%",
+              padding: "10px 14px",
+              borderRadius: "8px",
+              border: "1px solid var(--border)",
+              background: "var(--bg-card)",
+              color: "var(--text-primary)",
+              fontSize: "13px",
+              fontFamily: "var(--font-ui)",
+              resize: "vertical",
+              boxSizing: "border-box",
+            }}
+          />
+        )}
       </div>
 
       <button

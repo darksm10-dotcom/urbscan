@@ -14,6 +14,7 @@ export interface GenerateEmailParams {
   emailType: EmailType;
   language: Language;
   productDescription: string;
+  sellerPersona?: string;
 }
 
 const EMAIL_TYPE_LABELS: Record<EmailType, string> = {
@@ -36,9 +37,12 @@ export async function generateEmail(params: GenerateEmailParams): Promise<EmailR
     baseURL: "https://api.deepseek.com",
   });
 
-  const { companyContent, emailType, language, productDescription } = params;
+  const { companyContent, emailType, language, productDescription, sellerPersona } = params;
 
   const prompt = `You are a B2B sales email writer. Write a concise, personalized sales email.
+
+SELLER PROFILE:
+${sellerPersona ?? ""}
 
 COMPANY WEBSITE CONTENT:
 ${companyContent}
