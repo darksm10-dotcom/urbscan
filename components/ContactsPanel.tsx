@@ -15,6 +15,7 @@ import { getPipelineData, setLeadStatus } from "@/lib/pipeline";
 import { REGION_PRESETS } from "@/lib/regions";
 import { buildNotionPayload, syncToNotion } from "@/lib/notion";
 import { STATUS_META as PIPELINE_META } from "@/lib/constants";
+import { getEmailsForBuilding } from "@/lib/email-history";
 
 function exportContactsCSV(contacts: ContactLog[]) {
   const header = "Company,Address,Phone,Method,Contacted At,Note,Follow-up Date,Follow-up Done";
@@ -659,6 +660,38 @@ export default function ContactsPanel() {
                               </span>
                             )}
                           </div>
+
+                          {/* Generated emails linked to this contact */}
+                          {(() => {
+                            const linkedEmails = getEmailsForBuilding(c.buildingId);
+                            if (linkedEmails.length === 0) return null;
+                            return (
+                              <div style={{ marginTop: "16px" }}>
+                                <div style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-secondary)", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                                  Generated Emails ({linkedEmails.length})
+                                </div>
+                                {linkedEmails.map((email) => (
+                                  <div key={email.id} style={{ padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--bg-card)", marginBottom: "6px" }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px" }}>
+                                      <div style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)", flex: 1 }}>
+                                        {email.subject}
+                                      </div>
+                                      <div style={{ fontSize: "11px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
+                                        {new Date(email.createdAt).toLocaleDateString()}
+                                      </div>
+                                    </div>
+                                    <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "2px" }}>
+                                      {email.emailType} · {email.language === "zh" ? "中文" : "English"}
+                                      {email.pipelineStage && ` · ${email.pipelineStage}`}
+                                    </div>
+                                    <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "4px", whiteSpace: "pre-wrap", lineHeight: 1.4, maxHeight: "60px", overflow: "hidden" }}>
+                                      {email.body.slice(0, 200)}{email.body.length > 200 ? "…" : ""}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
                         </td>
                       </tr>
                     )}

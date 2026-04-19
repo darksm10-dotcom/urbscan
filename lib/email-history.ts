@@ -54,3 +54,7 @@ export function updateEmailRecord(id: string, updates: Partial<EmailRecord>): vo
   const updated = history.map((r) => r.id === id ? { ...r, ...updates } : r);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
 }
+
+export function getEmailsForBuilding(buildingId: string): EmailRecord[] {
+  return loadEmailHistory().filter((r) => r.linkedBuildingId === buildingId);
+}
