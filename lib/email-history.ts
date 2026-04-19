@@ -8,6 +8,9 @@ export interface EmailRecord {
   emailType: "cold" | "followup" | "proposal";
   language: "en" | "zh";
   notionSaved: boolean;
+  linkedBuildingId?: string;
+  linkedBuildingName?: string;
+  pipelineStage?: "outreach" | "followup" | "closed_won" | "closed_lost";
 }
 
 const STORAGE_KEY = "emailHistory";
@@ -44,4 +47,10 @@ export function markNotionSaved(id: string): void {
 export function deleteEmailRecord(id: string): void {
   const history = loadEmailHistory();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(history.filter((r) => r.id !== id)));
+}
+
+export function updateEmailRecord(id: string, updates: Partial<EmailRecord>): void {
+  const history = loadEmailHistory();
+  const updated = history.map((r) => r.id === id ? { ...r, ...updates } : r);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
 }

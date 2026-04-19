@@ -2,7 +2,10 @@
 
 import { useState, useEffect } from "react";
 import { EmailType, Language, EmailResult } from "@/lib/email-writer";
-import { loadEmailHistory, saveEmailRecord, markNotionSaved, deleteEmailRecord, EmailRecord } from "@/lib/email-history";
+import { loadEmailHistory, saveEmailRecord, markNotionSaved, deleteEmailRecord, updateEmailRecord, EmailRecord } from "@/lib/email-history";
+import { getContacts, addContact } from "@/lib/contacts";
+import { setLeadStatus } from "@/lib/pipeline";
+import { loadLastScan } from "@/lib/scan-cache";
 
 const DEFAULT_PRODUCT =
   process.env.NEXT_PUBLIC_DEFAULT_PRODUCT ??
@@ -29,6 +32,13 @@ Personalized Account Manager — 一个客户经理对接所有服务，不用�
 
 type LoadingStage = "scraping" | "writing" | null;
 
+interface LinkedBuilding {
+  id: string;
+  name: string;
+  address?: string;
+  phone?: string;
+}
+
 export default function EmailGenerator() {
   const [url, setUrl] = useState("");
   const [emailType, setEmailType] = useState<EmailType>("cold");
@@ -49,9 +59,34 @@ export default function EmailGenerator() {
   const [showPersona, setShowPersona] = useState(false);
   const [history, setHistory] = useState<EmailRecord[]>([]);
   const [savingNotion, setSavingNotion] = useState<string | null>(null);
+  const [buildingSearch, setBuildingSearch] = useState("");
+  const [linkedBuilding, setLinkedBuilding] = useState<LinkedBuilding | null>(null);
+  const [buildingOptions, setBuildingOptions] = useState<LinkedBuilding[]>([]);
+  const [showBuildingDropdown, setShowBuildingDropdown] = useState(false);
 
   useEffect(() => {
     setHistory(loadEmailHistory());
+  }, []);
+
+  useEffect(() => {
+    const fromContacts: LinkedBuilding[] = [];
+    const seen = new Set<string>();
+    for (const c of getContacts()) {
+      if (!seen.has(c.buildingId)) {
+        seen.add(c.buildingId);
+        fromContacts.push({ id: c.buildingId, name: c.buildingName, address: c.buildingAddress, phone: c.buildingPhone });
+      }
+    }
+    const scan = loadLastScan();
+    if (scan) {
+      for (const b of scan.buildings) {
+        if (!seen.has(b.id)) {
+          seen.add(b.id);
+          fromContacts.push({ id: b.id, name: b.name, address: b.address });
+        }
+      }
+    }
+    setBuildingOptions(fromContacts);
   }, []);
 
   async function handleGenerate() {
@@ -86,6 +121,11 @@ export default function EmailGenerator() {
         language,
       });
       setHistory(prev => [record, ...prev]);
+      if (linkedBuilding) {
+        logContactForBuilding(linkedBuilding, "email", `Email sent: ${data.subject}`, "outreach");
+        updateEmailRecord(record.id, { linkedBuildingId: linkedBuilding.id, linkedBuildingName: linkedBuilding.name, pipelineStage: "outreach" });
+        setHistory(loadEmailHistory());
+      }
     } catch {
       clearTimeout(timer);
       setError("Network error. Please try again.");
@@ -136,6 +176,26 @@ export default function EmailGenerator() {
   function handleDeleteRecord(id: string) {
     deleteEmailRecord(id);
     setHistory(loadEmailHistory());
+  }
+
+  function logContactForBuilding(building: LinkedBuilding, method: "email" | "other", note: string, stage: "outreach" | "followup" | "closed_won" | "closed_lost") {
+    const statusMap: Record<string, "contacted" | "following" | "won" | "lost"> = {
+      outreach: "contacted",
+      followup: "following",
+      closed_won: "won",
+      closed_lost: "lost",
+    };
+    addContact({
+      buildingId: building.id,
+      buildingName: building.name,
+      buildingAddress: building.address,
+      buildingPhone: building.phone,
+      method,
+      note,
+      contactedAt: new Date().toISOString(),
+      followUpDone: stage === "closed_won" || stage === "closed_lost",
+    });
+    setLeadStatus(building.id, statusMap[stage]);
   }
 
   return (
@@ -223,6 +283,48 @@ export default function EmailGenerator() {
             <option value="zh">中文</option>
           </select>
         </div>
+      </div>
+
+      {/* Link to building */}
+      <div style={{ marginBottom: "16px", position: "relative" }}>
+        <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "6px" }}>
+          Link to Contact (optional)
+        </label>
+        {linkedBuilding ? (
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "10px 14px", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--bg-card)" }}>
+            <span style={{ flex: 1, fontSize: "14px", color: "var(--text-primary)" }}>{linkedBuilding.name}</span>
+            <button onClick={() => { setLinkedBuilding(null); setBuildingSearch(""); }} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)", fontSize: "16px" }}>✕</button>
+          </div>
+        ) : (
+          <>
+            <input
+              type="text"
+              value={buildingSearch}
+              onChange={(e) => { setBuildingSearch(e.target.value); setShowBuildingDropdown(true); }}
+              onFocus={() => setShowBuildingDropdown(true)}
+              onBlur={() => setTimeout(() => setShowBuildingDropdown(false), 150)}
+              placeholder="Search building or company..."
+              style={{ width: "100%", padding: "10px 14px", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--bg-card)", color: "var(--text-primary)", fontSize: "14px", fontFamily: "var(--font-ui)", boxSizing: "border-box" }}
+            />
+            {showBuildingDropdown && buildingSearch.length > 0 && (
+              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: "8px", zIndex: 10, maxHeight: "200px", overflowY: "auto" }}>
+                {buildingOptions
+                  .filter(b => b.name.toLowerCase().includes(buildingSearch.toLowerCase()))
+                  .slice(0, 10)
+                  .map(b => (
+                    <div key={b.id} onMouseDown={() => { setLinkedBuilding(b); setBuildingSearch(""); setShowBuildingDropdown(false); }}
+                      style={{ padding: "10px 14px", cursor: "pointer", fontSize: "13px", color: "var(--text-primary)", borderBottom: "1px solid var(--border)" }}>
+                      <div style={{ fontWeight: 600 }}>{b.name}</div>
+                      {b.address && <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{b.address}</div>}
+                    </div>
+                  ))}
+                {buildingOptions.filter(b => b.name.toLowerCase().includes(buildingSearch.toLowerCase())).length === 0 && (
+                  <div style={{ padding: "10px 14px", fontSize: "13px", color: "var(--text-secondary)" }}>No matches found</div>
+                )}
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       <div style={{ marginBottom: "20px" }}>
@@ -473,6 +575,34 @@ export default function EmailGenerator() {
                   ✕
                 </button>
               </div>
+              {record.linkedBuildingId && (
+                <div style={{ marginTop: "6px", display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                  {(["followup", "closed_won", "closed_lost"] as const)
+                    .filter(stage => {
+                      const order = ["outreach", "followup", "closed_won", "closed_lost"];
+                      return order.indexOf(stage) > order.indexOf(record.pipelineStage ?? "outreach");
+                    })
+                    .map(stage => {
+                      const labels: Record<string, string> = { followup: "→ Follow-up", closed_won: "✓ Won", closed_lost: "✗ Lost" };
+                      return (
+                        <button key={stage}
+                          onClick={() => {
+                            const building: LinkedBuilding = { id: record.linkedBuildingId!, name: record.linkedBuildingName! };
+                            logContactForBuilding(building, "other", `Stage: ${stage} (${record.subject})`, stage);
+                            updateEmailRecord(record.id, { pipelineStage: stage });
+                            setHistory(loadEmailHistory());
+                          }}
+                          style={{ fontSize: "11px", padding: "3px 8px", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-secondary)", cursor: "pointer", fontFamily: "var(--font-ui)" }}
+                        >
+                          {labels[stage]}
+                        </button>
+                      );
+                    })}
+                  <span style={{ fontSize: "11px", color: "var(--text-secondary)", padding: "3px 4px" }}>
+                    {record.pipelineStage ?? "outreach"}
+                  </span>
+                </div>
+              )}
             </div>
           ))}
         </div>
