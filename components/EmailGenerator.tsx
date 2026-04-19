@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { EmailType, Language, EmailResult } from "@/lib/email-writer";
+import { loadEmailHistory, saveEmailRecord, markNotionSaved, deleteEmailRecord, EmailRecord } from "@/lib/email-history";
 
 const DEFAULT_PRODUCT =
   process.env.NEXT_PUBLIC_DEFAULT_PRODUCT ??
@@ -46,6 +47,12 @@ export default function EmailGenerator() {
     return DEFAULT_SELLER_PERSONA;
   });
   const [showPersona, setShowPersona] = useState(false);
+  const [history, setHistory] = useState<EmailRecord[]>([]);
+  const [savingNotion, setSavingNotion] = useState<string | null>(null);
+
+  useEffect(() => {
+    setHistory(loadEmailHistory());
+  }, []);
 
   async function handleGenerate() {
     if (!url.trim()) return;
@@ -70,6 +77,15 @@ export default function EmailGenerator() {
       setResult(data as EmailResult);
       setEditedSubject(data.subject);
       setEditedBody(data.body);
+      const record = saveEmailRecord({
+        url: url.trim(),
+        companyName: data.key_insights?.[0] ?? new URL(url.startsWith("http") ? url : `https://${url}`).hostname,
+        subject: data.subject,
+        body: data.body,
+        emailType,
+        language,
+      });
+      setHistory(prev => [record, ...prev]);
     } catch {
       clearTimeout(timer);
       setError("Network error. Please try again.");
@@ -92,8 +108,40 @@ export default function EmailGenerator() {
 
   const isLoading = loadingStage !== null;
 
+  async function saveToNotion(record: EmailRecord) {
+    setSavingNotion(record.id);
+    try {
+      const res = await fetch("/api/notion/email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          companyName: record.companyName,
+          subject: record.subject,
+          url: record.url,
+          emailType: record.emailType,
+          language: record.language,
+          emailBody: record.body,
+          createdAt: record.createdAt,
+        }),
+      });
+      if (res.ok) {
+        markNotionSaved(record.id);
+        setHistory(loadEmailHistory());
+      }
+    } finally {
+      setSavingNotion(null);
+    }
+  }
+
+  function handleDeleteRecord(id: string) {
+    deleteEmailRecord(id);
+    setHistory(loadEmailHistory());
+  }
+
   return (
-    <div style={{ maxWidth: "720px", padding: "32px 40px" }}>
+    <div style={{ display: "flex", minHeight: 0, flex: 1 }}>
+      {/* Left: form */}
+      <div style={{ maxWidth: "720px", width: "100%", padding: "32px 40px", overflowY: "auto" }}>
       <div style={{ fontSize: "22px", fontWeight: 700, color: "var(--text-primary)", marginBottom: "4px" }}>
         Email Generator
       </div>
@@ -351,6 +399,82 @@ export default function EmailGenerator() {
           >
             {copied ? "Copied!" : "Copy Email"}
           </button>
+        </div>
+      )}
+      </div>
+
+      {/* Right: history */}
+      {history.length > 0 && (
+        <div style={{
+          width: "320px",
+          flexShrink: 0,
+          borderLeft: "1px solid var(--border)",
+          overflowY: "auto",
+          padding: "32px 20px",
+        }}>
+          <div style={{ fontSize: "14px", fontWeight: 700, color: "var(--text-primary)", marginBottom: "16px" }}>
+            History ({history.length})
+          </div>
+          {history.map((record) => (
+            <div key={record.id} style={{
+              padding: "12px",
+              borderRadius: "8px",
+              border: "1px solid var(--border)",
+              marginBottom: "10px",
+              background: "var(--bg-card)",
+            }}>
+              <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "4px" }}>
+                {new Date(record.createdAt).toLocaleDateString()} · {record.emailType}
+              </div>
+              <div style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)", marginBottom: "4px", wordBreak: "break-word" }}>
+                {record.subject}
+              </div>
+              <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "8px" }}>
+                {record.url}
+              </div>
+              <div style={{ display: "flex", gap: "6px" }}>
+                <button
+                  onClick={() => {
+                    setEditedSubject(record.subject);
+                    setEditedBody(record.body);
+                    setResult({ subject: record.subject, body: record.body, key_insights: [] });
+                  }}
+                  style={{
+                    fontSize: "11px", padding: "4px 10px", borderRadius: "6px",
+                    border: "1px solid var(--border)", background: "transparent",
+                    color: "var(--text-secondary)", cursor: "pointer", fontFamily: "var(--font-ui)",
+                  }}
+                >
+                  View
+                </button>
+                {!record.notionSaved ? (
+                  <button
+                    onClick={() => saveToNotion(record)}
+                    disabled={savingNotion === record.id}
+                    style={{
+                      fontSize: "11px", padding: "4px 10px", borderRadius: "6px",
+                      border: "1px solid var(--border)", background: "transparent",
+                      color: "var(--text-secondary)", cursor: "pointer", fontFamily: "var(--font-ui)",
+                    }}
+                  >
+                    {savingNotion === record.id ? "Saving..." : "→ Notion"}
+                  </button>
+                ) : (
+                  <span style={{ fontSize: "11px", color: "var(--text-secondary)", padding: "4px 6px" }}>✓ Notion</span>
+                )}
+                <button
+                  onClick={() => handleDeleteRecord(record.id)}
+                  style={{
+                    fontSize: "11px", padding: "4px 8px", borderRadius: "6px",
+                    border: "none", background: "transparent",
+                    color: "var(--text-secondary)", cursor: "pointer", fontFamily: "var(--font-ui)",
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
