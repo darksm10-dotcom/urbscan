@@ -64,7 +64,18 @@ function inferType(name: string, types: string[]): "office" | "residential" {
   return "office";
 }
 
+// Sdn Bhd / Berhad = Malaysian registered company → always B2B
+function isMalaysianRegisteredCompany(name: string): boolean {
+  const lower = name.toLowerCase();
+  return (
+    lower.includes("sdn bhd") || lower.includes("sdn. bhd") ||
+    lower.includes("berhad") || lower.includes(" bhd")
+  );
+}
+
 function isBusiness(types: string[], name: string, industry: Industry): boolean {
+  // Malaysian registered companies are always B2B — skip all other checks
+  if (isMalaysianRegisteredCompany(name)) return true;
   if (types.some((t) => EXCLUDE_TYPES.has(t))) return false;
   // Only exclude bank branches for non-finance industries
   if (!FINANCE_INDUSTRIES.has(industry) && types.includes("bank")) return false;
@@ -75,7 +86,7 @@ function isBusiness(types: string[], name: string, industry: Industry): boolean 
     "corporate_office", "office",
   ];
   if (!types.some((t) => businessTypes.includes(t))) return false;
-  // Reject only clearly consumer-facing names (kedai alone is too broad — "Kedai IT" is a valid B2B lead)
+  // Reject only clearly consumer-facing names
   const lower = name.toLowerCase();
   const consumerWords = ["restaurant", "cafe", "mamak", "kopitiam", "bistro", "eatery", "kedai makan", "warung"];
   if (consumerWords.some((w) => lower.includes(w))) return false;
@@ -94,14 +105,30 @@ function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: numbe
   return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
 }
 
-function computeScore(rating: number | undefined, reviewCount: number | undefined, distance: number, radius: number): number {
-  // Presence score: 0-40 pts based on review count (proxy for size/activity)
-  const countScore = Math.min(40, Math.round(((reviewCount ?? 0) / 200) * 40));
-  // Quality score: 0-40 pts based on rating
-  const ratingScore = rating ? Math.round(((rating - 1) / 4) * 40) : 0;
-  // Proximity score: 0-20 pts (closer = better)
-  const proximityScore = Math.round((1 - distance / radius) * 20);
-  return Math.max(0, Math.min(100, countScore + ratingScore + proximityScore));
+function computeScore(
+  rating: number | undefined,
+  reviewCount: number | undefined,
+  distance: number,
+  radius: number,
+  name: string,
+  types: string[],
+  hasWebsite: boolean,
+): number {
+  // Presence score: 0-35 pts
+  const countScore = Math.min(35, Math.round(((reviewCount ?? 0) / 200) * 35));
+  // Quality score: 0-35 pts
+  const ratingScore = rating ? Math.round(((rating - 1) / 4) * 35) : 0;
+  // Proximity score: 0-15 pts
+  const proximityScore = Math.round((1 - distance / radius) * 15);
+  // B2B confidence bonus: 0-15 pts
+  let b2bBonus = 0;
+  if (isMalaysianRegisteredCompany(name)) b2bBonus += 10;
+  if (types.includes("corporate_office")) b2bBonus += 8;
+  else if (types.includes("office")) b2bBonus += 4;
+  if (hasWebsite) b2bBonus += 3;
+  b2bBonus = Math.min(15, b2bBonus);
+
+  return Math.max(0, Math.min(100, countScore + ratingScore + proximityScore + b2bBonus));
 }
 
 type PlaceResult = {
@@ -245,7 +272,7 @@ export async function POST(req: NextRequest) {
           lng: pLng,
           rating,
           reviewCount,
-          score: computeScore(rating, reviewCount, distance, radius),
+          score: computeScore(rating, reviewCount, distance, radius, name, p.types ?? [], !!p.websiteUri),
           nearestCenter: center,
           phone: formatMalaysianPhone(p.internationalPhoneNumber ?? p.nationalPhoneNumber),
           website: p.websiteUri,

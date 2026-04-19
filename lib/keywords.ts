@@ -2,46 +2,49 @@ import type { Industry } from "@/types";
 
 export const INDUSTRY_KEYWORDS: Record<Industry, string[]> = {
   all: [
-    "company office corporate headquarters",
-    "business enterprise services",
-    "professional services firm",
+    "Sdn Bhd company office",
+    "Berhad corporation headquarters",
+    "professional services firm Malaysia",
   ],
   tech: [
-    "IT company software technology",
-    "tech startup digital agency",
-    "data center cloud computing cybersecurity",
+    "IT software technology Sdn Bhd",
+    "tech company digital agency Malaysia",
+    "cybersecurity cloud data center Sdn Bhd",
+    "teknologi maklumat syarikat",
   ],
   finance: [
-    "bank financial services investment",
-    "insurance accounting audit firm",
-    "fund management securities",
+    "bank financial services Berhad Malaysia",
+    "insurance accounting audit Sdn Bhd",
+    "fund management securities investment Malaysia",
+    "kewangan perkhidmatan korporat",
   ],
   legal: [
-    "law firm legal services advocate",
-    "solicitor chambers legal consultant",
+    "law firm legal services advocate Malaysia",
+    "solicitor chambers peguam Malaysia",
   ],
   healthcare: [
-    "clinic medical specialist hospital",
-    "pharmaceutical biotech medical device",
+    "klinik specialist medical centre Malaysia",
+    "pharmaceutical biotech medical device Sdn Bhd",
   ],
   manufacturing: [
-    "factory manufacturing industrial production",
-    "engineering plant assembly",
+    "manufacturing industrial Sdn Bhd Malaysia",
+    "engineering plant kilang perindustrian",
   ],
   logistics: [
-    "logistics warehouse freight shipping",
-    "courier supply chain distribution",
+    "logistics freight forwarding Sdn Bhd Malaysia",
+    "courier supply chain warehouse Malaysia",
   ],
   telco: [
-    "telecommunications internet service provider broadband",
-    "ISP network infrastructure telco",
+    "telecommunications internet service provider Malaysia",
+    "ISP broadband network infrastructure Sdn Bhd",
+    "telekomunikasi rangkaian perkhidmatan",
   ],
   consulting: [
-    "consulting advisory management services",
-    "strategy firm HR outsourcing",
+    "consulting advisory management Sdn Bhd Malaysia",
+    "HR outsourcing strategy firm Malaysia",
   ],
   trading: [
-    "trading wholesale distributor import export",
-    "retail chain general trading",
+    "trading import export Sdn Bhd Malaysia",
+    "wholesale distributor perdagangan Malaysia",
   ],
 };
