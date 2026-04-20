@@ -238,8 +238,10 @@ export default function EmailPanel({ initialCompose, onComposeClear, onGoToConta
     setBatchProgress(null);
     setSelectedIds(new Set());
 
-    const freshDrafts = getEmailDrafts().filter((d) => d.status === "draft");
-    if (freshDrafts.length > 0 && !selectedId) {
+    const allDrafts = getEmailDrafts();
+    const freshDrafts = allDrafts.filter((d) => d.status === "draft");
+    const currentSelected = allDrafts.find((d) => d.id === selectedId);
+    if (freshDrafts.length > 0 && currentSelected?.status !== "draft") {
       selectItem(freshDrafts[0]);
     }
   }
