@@ -15,11 +15,32 @@ export interface ContactLog {
   buildingName: string;
   buildingAddress?: string;
   buildingPhone?: string;
+  recipientEmail?: string;
+  recipientName?: string;
   method: "whatsapp" | "call" | "email" | "visit" | "other";
+  extraMethods?: Array<"whatsapp" | "call" | "email" | "visit" | "other">;
   note: string;
   contactedAt: string;   // ISO datetime
   followUpAt?: string;   // ISO date (YYYY-MM-DD)
   followUpDone: boolean;
+}
+
+export interface EmailDraft {
+  id: string;
+  contactId: string;
+  buildingName: string;
+  buildingAddress?: string;
+  website?: string;
+  websiteSummary?: string;
+  recipientEmail: string;
+  recipientName: string;
+  ccEmails?: string[];
+  subject: string;
+  bodyText: string;
+  bodyHtml: string;
+  status: "queued" | "draft" | "sent";
+  createdAt: string;
+  sentAt?: string;
 }
 
 export interface CompanyEnrichment {
@@ -74,6 +95,7 @@ export interface Building {
   nearestCenter?: SearchLocation;
   phone?: string;
   website?: string;
+  websiteSummary?: string;
   contacts?: HunterContact[];
 }
 
