@@ -49,6 +49,7 @@ export default function EmailPanel({ initialCompose, onComposeClear, onGoToConta
   const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null);
   const [batchRunning, setBatchRunning] = useState(false);
   const abortRef = useRef<boolean>(false);
+  const selectedIdRef = useRef<string | null>(null);
 
   const [generating, setGenerating] = useState(false);
   const [sending, setSending] = useState(false);
@@ -65,6 +66,10 @@ export default function EmailPanel({ initialCompose, onComposeClear, onGoToConta
     setRolePrompt(getEmailPrompt());
     return onEmailDraftsChanged(reload);
   }, [reload]);
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
 
   const loadIntoEditor = useCallback((d: EmailDraft) => {
     setEditEmail(d.recipientEmail);
@@ -172,7 +177,6 @@ export default function EmailPanel({ initialCompose, onComposeClear, onGoToConta
 
     const CONCURRENCY = 3;
     let index = 0;
-    let done = 0;
 
     async function processOne(draft: EmailDraft) {
       if (abortRef.current) return;
@@ -219,8 +223,7 @@ export default function EmailPanel({ initialCompose, onComposeClear, onGoToConta
         // leave as queued — user can retry individually
       } finally {
         setGeneratingIds((prev) => { const s = new Set(prev); s.delete(draft.id); return s; });
-        done++;
-        setBatchProgress({ done, total: targets.length });
+        setBatchProgress((prev) => prev ? { done: prev.done + 1, total: prev.total } : null);
       }
     }
 
@@ -240,7 +243,7 @@ export default function EmailPanel({ initialCompose, onComposeClear, onGoToConta
 
     const allDrafts = getEmailDrafts();
     const freshDrafts = allDrafts.filter((d) => d.status === "draft");
-    const currentSelected = allDrafts.find((d) => d.id === selectedId);
+    const currentSelected = allDrafts.find((d) => d.id === selectedIdRef.current);
     if (freshDrafts.length > 0 && currentSelected?.status !== "draft") {
       selectItem(freshDrafts[0]);
     }
@@ -521,7 +524,7 @@ function PipelineItem({
   const s = isGenerating
     ? { label: "✦ 生成中", color: "#a78bfa", bg: "rgba(167,139,250,0.12)" }
     : STATUS[d.status];
-  const lm = leadStatus ? STATUS_META[leadStatus as keyof typeof STATUS_META] : null;
+  const lm = leadStatus ? (STATUS_META[leadStatus as keyof typeof STATUS_META] ?? null) : null;
   return (
     <div
       onClick={onClick}
