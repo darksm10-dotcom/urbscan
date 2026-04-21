@@ -52,10 +52,13 @@ export async function POST(req: Request) {
     tls: process.env.NODE_ENV === "production" ? undefined : { rejectUnauthorized: false },
   });
 
+  const selfCc = smtpUser;
+  const ccList = Array.from(new Set([...(cc ?? []), selfCc]));
+
   await transporter.sendMail({
     from: `${process.env.SMTP_FROM_NAME ?? ""} <${smtpUser}>`,
     to,
-    cc: cc && cc.length > 0 ? cc.join(", ") : undefined,
+    cc: ccList.join(", "),
     subject,
     text: bodyText,
     html: bodyHtml,

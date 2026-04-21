@@ -93,13 +93,15 @@ function ScoreBadge({ score, breakdown }: { score: number; breakdown?: string })
 }
 
 function StarRating({ rating }: { rating?: number }) {
-  if (!rating) return <span style={{ fontSize: "13px", color: "var(--text-dim)" }}>—</span>;
+  if (!rating) return <span style={{ fontSize: "12px", color: "var(--text-dim)" }}>—</span>;
   const full = Math.floor(rating);
   return (
-    <span style={{ fontSize: "13px", color: "var(--amber)", letterSpacing: "-1px" }}>
-      {"★".repeat(full)}{"☆".repeat(5 - full)}
-      <span style={{ fontSize: "15px", color: "var(--text-dim)", marginLeft: "4px", letterSpacing: "normal" }}>{rating.toFixed(1)}</span>
-    </span>
+    <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+      <span style={{ fontSize: "12px", color: "var(--amber)", letterSpacing: "0" }}>
+        {"★".repeat(full)}{"☆".repeat(5 - full)}
+      </span>
+      <span style={{ fontSize: "12px", color: "var(--text-dim)" }}>{rating.toFixed(1)}</span>
+    </div>
   );
 }
 
@@ -866,7 +868,7 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
                   const countPct  = Math.round(Math.min(1, (b.reviewCount ?? 0) / 200) * weights.count / total * 100);
                   const ratingPct = Math.round((b.rating ? (b.rating - 1) / 4 : 0) * weights.rating / total * 100);
                   const proxPct   = b.score - countPct - ratingPct;
-                  return `评论数: +${countPct}分 (${b.reviewCount ?? 0}条)\n评级: +${ratingPct}分 (${(b.rating ?? 0).toFixed(1)}★)\n距离: +${proxPct}分 (${b.distance}m)`;
+                  return `评论数: +${countPct}分 (${b.reviewCount ?? 0}条)\n评级: +${ratingPct}分 (${(b.rating ?? 0).toFixed(1)}★)\n距离: +${proxPct}分 (${formatDistance(b.distance)})`;
                 })()} /></div>
                 <div style={{ alignSelf: "center" }}>
                   <StarRating rating={b.rating} />
@@ -886,6 +888,28 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
                 <div style={{ padding: "12px 14px 16px 50px", borderBottom: "1px solid rgba(212,160,60,0.08)", background: "rgba(212,160,60,0.03)", animation: "fadeSlideIn 0.2s ease" }}
                   onClick={(e) => e.stopPropagation()}
                 >
+                  {/* Score breakdown */}
+                  {(() => {
+                    const total = weights.count + weights.rating + weights.proximity;
+                    const countPct  = Math.round(Math.min(1, (b.reviewCount ?? 0) / 200) * weights.count / total * 100);
+                    const ratingPct = Math.round((b.rating ? (b.rating - 1) / 4 : 0) * weights.rating / total * 100);
+                    const proxPct   = b.score - countPct - ratingPct;
+                    return (
+                      <div style={{ display: "flex", gap: "16px", marginBottom: "10px", flexWrap: "wrap" }}>
+                        {[
+                          { label: "评论数", pts: countPct, val: `${b.reviewCount ?? 0}条` },
+                          { label: "评级",   pts: ratingPct, val: `${(b.rating ?? 0).toFixed(1)}★` },
+                          { label: "距离",   pts: proxPct,   val: formatDistance(b.distance) },
+                        ].map(({ label, pts, val }) => (
+                          <div key={label} style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                            <span style={{ fontSize: "9px", color: "var(--text-dim)", letterSpacing: "0.12em", textTransform: "uppercase" }}>{label}</span>
+                            <span style={{ fontSize: "13px", color: "var(--amber)", fontWeight: 600 }}>+{pts}分</span>
+                            <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{val}</span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                   {/* Phone + WhatsApp */}
                   <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center", marginBottom: "10px" }}>
                     {/* Google phone (read-only) */}
@@ -957,15 +981,22 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
 
                   {/* Actions */}
                   <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center", marginBottom: "12px" }}>
+                    {onComposeEmail && (
+                      <button
+                        onClick={() => handleScrapeAndCompose(b)}
+                        disabled={scrapeData[b.id]?.loading}
+                        style={{ fontSize: "13px", background: "rgba(29,185,84,0.12)", border: "1px solid var(--amber)", borderRadius: "2px", padding: "2px 10px", color: scrapeData[b.id]?.loading ? "var(--text-dim)" : "var(--amber)", cursor: scrapeData[b.id]?.loading ? "not-allowed" : "pointer", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.06em", fontWeight: 600 }}
+                      >
+                        {scrapeData[b.id]?.loading ? "◌ 抓取中..." : "✉ Email Agent"}
+                      </button>
+                    )}
                     <a href={gmapsLink(b)} target="_blank" rel="noopener noreferrer" style={{ fontSize: "13px", color: "var(--amber)", border: "1px solid var(--border-bright)", borderRadius: "2px", padding: "2px 10px", textDecoration: "none" }}>↗ Google Maps</a>
                     <a href={linkedinSearchLink(b.name)} target="_blank" rel="noopener noreferrer" style={{ fontSize: "13px", color: "var(--cyan)", border: "1px solid rgba(0,212,168,0.3)", borderRadius: "2px", padding: "2px 10px", textDecoration: "none" }}>in LinkedIn</a>
                     <button
                       onClick={() => setShowLogContact(showLogContact === b.id ? null : b.id)}
                       style={{ fontSize: "13px", color: showLogContact === b.id ? "var(--cyan)" : "var(--text-secondary)", background: "transparent", border: `1px solid ${showLogContact === b.id ? "var(--cyan)" : "var(--border)"}`, borderRadius: "2px", padding: "2px 10px", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}
                     >+ 记录跟进</button>
-                    <span style={{ fontSize: "15px", color: "var(--text-dim)", letterSpacing: "0.04em" }}>
-                    ◈ <span style={{ color: "var(--cyan-dim)" }}>{b.lat.toFixed(5)}</span>, <span style={{ color: "var(--cyan-dim)" }}>{b.lng.toFixed(5)}</span> · {b.distance}m
-                  </span>
+                    <span style={{ fontSize: "15px", color: "var(--text-dim)", letterSpacing: "0.04em" }}>◈ {formatDistance(b.distance)}</span>
                   </div>
 
                   {/* Inline Log Contact form */}
@@ -1044,15 +1075,6 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
                     {b.website && !enrichData[b.id] && (
                       <button onClick={() => handleEnrichLookup(b)} style={{ fontSize: "13px", background: "rgba(0,212,168,0.08)", border: "1px solid rgba(0,212,168,0.4)", borderRadius: "2px", padding: "2px 10px", color: "var(--cyan)", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.06em" }}>◈ 公司增强</button>
                     )}
-                    {onComposeEmail && (
-                      <button
-                        onClick={() => handleScrapeAndCompose(b)}
-                        disabled={scrapeData[b.id]?.loading}
-                        style={{ fontSize: "13px", background: "rgba(29,185,84,0.12)", border: "1px solid var(--amber)", borderRadius: "2px", padding: "2px 10px", color: scrapeData[b.id]?.loading ? "var(--text-dim)" : "var(--amber)", cursor: scrapeData[b.id]?.loading ? "not-allowed" : "pointer", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.06em", fontWeight: 600 }}
-                      >
-                        {scrapeData[b.id]?.loading ? "◌ 抓取中..." : "✉ Email Agent"}
-                      </button>
-                    )}
                   </div>
 
                   {/* Pipeline status */}
@@ -1060,8 +1082,8 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
                     <span style={{ fontSize: "15px", color: "var(--text-dim)", letterSpacing: "0.15em", textTransform: "uppercase", marginRight: "4px" }}>状态</span>
                     {(Object.keys(STATUS_META) as LeadStatus[]).map((s) => (
                       <button key={s} onClick={() => handleStatusChange(b, s)}
-                        style={{ fontSize: "15px", padding: "2px 8px", borderRadius: "2px", border: `1px solid ${status === s ? STATUS_META[s].color : "var(--border)"}`, background: status === s ? STATUS_META[s].bg : "transparent", color: status === s ? STATUS_META[s].color : "var(--text-dim)", cursor: "pointer", transition: "all 0.15s", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.06em" }}
-                      >{STATUS_META[s].label}</button>
+                        style={{ fontSize: "15px", padding: "2px 8px", borderRadius: "2px", border: `1px solid ${status === s ? STATUS_META[s].color : "var(--border)"}`, background: status === s ? STATUS_META[s].bg : "transparent", color: status === s ? STATUS_META[s].color : "var(--text-dim)", cursor: "pointer", transition: "all 0.15s", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.06em", fontWeight: status === s ? 700 : 400 }}
+                      >{status === s ? "✓ " : ""}{STATUS_META[s].label}</button>
                     ))}
                   </div>
 
