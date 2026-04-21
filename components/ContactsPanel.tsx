@@ -10,12 +10,15 @@ import {
   getOverdueFollowUps,
   googleCalendarLink,
   onContactsChanged,
+  markFollowUpsDone,
 } from "@/lib/contacts";
 import { getPipelineData, setLeadStatus } from "@/lib/pipeline";
 import { REGION_PRESETS } from "@/lib/regions";
 import { buildNotionPayload, syncToNotion } from "@/lib/notion";
 import { STATUS_META as PIPELINE_META } from "@/lib/constants";
 import { getEmailsForBuilding } from "@/lib/email-history";
+import { getEmailDrafts } from "@/lib/email-drafts";
+import { generateFollowUpDraft } from "@/lib/follow-up-email";
 
 function exportContactsCSV(contacts: ContactLog[]) {
   const header = "Company,Address,Phone,Method,Contacted At,Note,Follow-up Date,Follow-up Done";
@@ -92,7 +95,7 @@ type FilterMode = "all" | LeadStatus;
 type SortCol = "name" | "date" | "followup" | "method";
 
 interface EditForm {
-  method: ContactLog["method"];
+  methods: ContactLog["method"][];
   note: string;
   followUpAt: string;
   followUpDone: boolean;
@@ -152,8 +155,10 @@ const inputStyle: React.CSSProperties = {
   fontFamily: "var(--font-ui)",
 };
 
-export default function ContactsPanel() {
+export default function ContactsPanel({ onGoToEmail }: { onGoToEmail?: () => void }) {
   const [contacts, setContacts] = useState<ContactLog[]>([]);
+  const [followUpGenerating, setFollowUpGenerating] = useState<Set<string>>(new Set());
+  const followUpGeneratingRef = useRef<Set<string>>(new Set());
   const [filter, setFilter] = useState<FilterMode>("all");
   const [search, setSearch] = useState("");
   const [sortCol, setSortCol] = useState<SortCol>("date");
@@ -209,7 +214,12 @@ export default function ContactsPanel() {
     reload();
     if (!("Notification" in window)) setNotifStatus("unsupported");
     else setNotifStatus(Notification.permission);
-    return onContactsChanged(reload);
+    const unsub = onContactsChanged(reload);
+    // Refresh at midnight so "today" overdue counts stay accurate
+    const now = new Date();
+    const msUntilMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() - now.getTime();
+    const midnightTimer = setTimeout(() => { reload(); }, msUntilMidnight);
+    return () => { unsub(); clearTimeout(midnightTimer); };
   }, [reload]);
 
   function changeStatus(buildingId: string, status: LeadStatus) {
@@ -239,7 +249,7 @@ export default function ContactsPanel() {
     } else {
       setExpandedId(c.id);
       setEditForm({
-        method: c.method,
+        methods: [c.method, ...(c.extraMethods ?? [])],
         note: c.note || "",
         followUpAt: c.followUpAt || "",
         followUpDone: c.followUpDone,
@@ -249,8 +259,10 @@ export default function ContactsPanel() {
 
   function saveEdit(id: string) {
     if (!editForm) return;
+    const [primary, ...extras] = editForm.methods;
     updateContact(id, {
-      method: editForm.method,
+      method: primary ?? "other",
+      extraMethods: extras.length > 0 ? extras : undefined,
       note: editForm.note,
       followUpAt: editForm.followUpAt || undefined,
       followUpDone: editForm.followUpAt ? editForm.followUpDone : false,
@@ -265,11 +277,77 @@ export default function ContactsPanel() {
     if (expandedId === id) { setExpandedId(null); setEditForm(null); }
   }
 
+  async function handleFollowUpEmail(c: ContactLog) {
+    if (followUpGeneratingRef.current.has(c.id)) return;
+    followUpGeneratingRef.current.add(c.id);
+    setFollowUpGenerating((prev) => new Set(prev).add(c.id));
+    try {
+      await generateFollowUpDraft(c);
+      onGoToEmail?.();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Follow-up generation failed");
+    } finally {
+      followUpGeneratingRef.current.delete(c.id);
+      setFollowUpGenerating((prev) => { const s = new Set(prev); s.delete(c.id); return s; });
+    }
+  }
+
+  const [bulkRunning, setBulkRunning] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+  const bulkAbortRef = useRef(false);
+
+  async function handleBulkFollowUp() {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const targets = contacts.filter(
+      (c) => !c.followUpDone && c.followUpAt && c.followUpAt <= todayStr
+    );
+    if (targets.length === 0) return;
+
+    setBulkRunning(true);
+    bulkAbortRef.current = false;
+    const abortController = new AbortController();
+    setBulkProgress({ done: 0, total: targets.length });
+
+    const CONCURRENCY = 3;
+    let index = 0;
+    const errors: string[] = [];
+
+    async function processOne(c: ContactLog) {
+      if (bulkAbortRef.current) return;
+      try {
+        await generateFollowUpDraft(c, abortController.signal);
+      } catch (e) {
+        if ((e as Error).name !== "AbortError") {
+          errors.push(c.buildingName);
+        }
+      } finally {
+        setBulkProgress((prev) => prev ? { done: prev.done + 1, total: prev.total } : null);
+      }
+    }
+
+    async function runWorker() {
+      while (index < targets.length && !bulkAbortRef.current) {
+        const item = targets[index++];
+        await processOne(item);
+      }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, targets.length) }, runWorker));
+
+    if (bulkAbortRef.current) abortController.abort();
+
+    setBulkRunning(false);
+    setBulkProgress(null);
+    if (errors.length > 0) alert(`${errors.length} 条生成失败：${errors.join("、")}`);
+    onGoToEmail?.();
+  }
+
   function handleMarkAllOverdueDone() {
     const todayStr = new Date().toISOString().slice(0, 10);
-    contacts
-      .filter((c) => !c.followUpDone && c.followUpAt && c.followUpAt < todayStr)
-      .forEach((c) => updateContact(c.id, { followUpDone: true }));
+    const ids = new Set(
+      contacts.filter((c) => !c.followUpDone && c.followUpAt && c.followUpAt < todayStr).map((c) => c.id)
+    );
+    if (ids.size > 0) markFollowUpsDone(ids);
   }
 
   function toggleSort(col: SortCol) {
@@ -291,6 +369,17 @@ export default function ContactsPanel() {
       overdue:   contacts.filter((c) => !c.followUpDone && c.followUpAt && c.followUpAt < today).length,
     };
   }, [contacts, pipeline, today]);
+
+  // Per-building: all methods ever used (including extraMethods)
+  const buildingMethods = useMemo(() => {
+    const map: Record<string, Set<ContactLog["method"]>> = {};
+    for (const c of contacts) {
+      if (!map[c.buildingId]) map[c.buildingId] = new Set();
+      map[c.buildingId].add(c.method);
+      for (const m of c.extraMethods ?? []) map[c.buildingId].add(m);
+    }
+    return map;
+  }, [contacts]);
 
   const filtered = useMemo(() => {
     let list = filter === "all"
@@ -363,7 +452,27 @@ export default function ContactsPanel() {
       </div>
 
       {stats.overdue > 0 && (
-        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "16px" }}>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginBottom: "16px" }}>
+          {onGoToEmail && (
+            <button
+              onClick={bulkRunning ? () => { bulkAbortRef.current = true; } : handleBulkFollowUp}
+              style={{
+                fontSize: "12px",
+                padding: "5px 14px",
+                borderRadius: "6px",
+                border: "1px solid rgba(96,165,250,0.4)",
+                background: bulkRunning ? "rgba(167,139,250,0.1)" : "rgba(96,165,250,0.08)",
+                color: bulkRunning ? "#a78bfa" : "var(--cyan)",
+                cursor: "pointer",
+                fontFamily: "var(--font-ui)",
+                fontWeight: 600,
+              }}
+            >
+              {bulkRunning
+                ? `停止 (${bulkProgress?.done ?? 0}/${bulkProgress?.total ?? 0})`
+                : `✦ 批量生成 ${stats.overdue} 条 Follow-up`}
+            </button>
+          )}
           <button
             onClick={handleMarkAllOverdueDone}
             style={{
@@ -497,10 +606,10 @@ export default function ContactsPanel() {
                 <th style={{ ...thStyle, width: "32px", textAlign: "center", cursor: "default" }}>#</th>
                 <th style={{ ...thStyle }} onClick={() => toggleSort("name")}>Company <SortIcon col="name" /></th>
                 <th style={{ ...thStyle }} onClick={() => toggleSort("method")}>Method <SortIcon col="method" /></th>
+                <th style={{ ...thStyle, cursor: "default" }}>Coverage</th>
                 <th style={{ ...thStyle }} onClick={() => toggleSort("date")}>Contacted <SortIcon col="date" /></th>
                 <th style={{ ...thStyle, cursor: "default" }}>Notes</th>
                 <th style={{ ...thStyle }} onClick={() => toggleSort("followup")}>Follow-up <SortIcon col="followup" /></th>
-                <th style={{ ...thStyle, width: "60px", cursor: "default" }}>Del</th>
               </tr>
             </thead>
             <tbody>
@@ -540,7 +649,56 @@ export default function ContactsPanel() {
                         )}
                       </td>
                       <td style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>
-                        <span style={{ fontSize: "13px", color: meta.color }}>{meta.icon} {meta.label}</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: "4px", flexWrap: "wrap" }}>
+                          <span style={{ fontSize: "13px", color: meta.color }}>{meta.icon} {meta.label}</span>
+                          {(c.extraMethods ?? []).map((m) => {
+                            const em = METHOD_META[m];
+                            return <span key={m} style={{ fontSize: "13px", color: em.color }}>{em.icon} {em.label}</span>;
+                          })}
+                        </div>
+                      </td>
+                      <td style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>
+                        {(() => {
+                          const methods = (["whatsapp", "email", "call", "visit"] as ContactLog["method"][]);
+                          const usedMethods = methods.filter((m) => buildingMethods[c.buildingId]?.has(m));
+                          const multi = usedMethods.length >= 2;
+                          return (
+                            <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                              {methods.map((m) => {
+                                const used = buildingMethods[c.buildingId]?.has(m);
+                                const mm = METHOD_META[m];
+                                return (
+                                  <span
+                                    key={m}
+                                    title={mm.label}
+                                    style={{
+                                      fontSize: "14px",
+                                      opacity: used ? 1 : 0.15,
+                                      color: used ? mm.color : "var(--text-dim)",
+                                      textShadow: used && multi ? `0 0 6px ${mm.color}` : "none",
+                                    }}
+                                  >
+                                    {mm.icon}
+                                  </span>
+                                );
+                              })}
+                              {multi && (
+                                <span style={{
+                                  fontSize: "10px",
+                                  fontWeight: 700,
+                                  color: "var(--amber)",
+                                  background: "rgba(29,185,84,0.12)",
+                                  border: "1px solid var(--amber)",
+                                  borderRadius: "8px",
+                                  padding: "0px 5px",
+                                  marginLeft: "2px",
+                                }}>
+                                  {usedMethods.length}×
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>
                         <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{formatDateTime(c.contactedAt)}</span>
@@ -550,17 +708,38 @@ export default function ContactsPanel() {
                           {c.note || <span style={{ color: "var(--text-dim)", fontStyle: "italic" }}>—</span>}
                         </span>
                       </td>
-                      <td style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>
-                        {c.followUpAt
-                          ? <FollowUpBadge dateStr={c.followUpAt} done={c.followUpDone} />
-                          : <span style={{ fontSize: "12px", color: "var(--text-dim)" }}>—</span>}
-                      </td>
-                      <td style={{ padding: "12px 10px", textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
-                        <button onClick={() => handleDelete(c.id)} title="Delete"
-                          style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-dim)", fontSize: "13px", padding: "0", opacity: 0.5, transition: "all 0.15s" }}
-                          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.opacity = "1"; (e.currentTarget as HTMLElement).style.color = "#e05555"; }}
-                          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.opacity = "0.5"; (e.currentTarget as HTMLElement).style.color = "var(--text-dim)"; }}
-                        >✕</button>
+                      <td style={{ padding: "12px 14px", whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          {c.followUpAt
+                            ? <FollowUpBadge dateStr={c.followUpAt} done={c.followUpDone} />
+                            : <span style={{ fontSize: "12px", color: "var(--text-dim)" }}>—</span>}
+                          {!c.followUpDone && c.followUpAt && onGoToEmail && (
+                            <button
+                              onClick={() => handleFollowUpEmail(c)}
+                              disabled={followUpGenerating.has(c.id)}
+                              title="AI 生成 Follow-up 邮件"
+                              style={{
+                                background: followUpGenerating.has(c.id) ? "rgba(167,139,250,0.1)" : "transparent",
+                                border: "1px solid var(--border)",
+                                borderRadius: "4px",
+                                cursor: followUpGenerating.has(c.id) ? "not-allowed" : "pointer",
+                                color: followUpGenerating.has(c.id) ? "#a78bfa" : "var(--cyan)",
+                                fontSize: "11px",
+                                padding: "2px 7px",
+                                flexShrink: 0,
+                                fontWeight: 600,
+                                transition: "all 0.15s",
+                              }}
+                            >
+                              {followUpGenerating.has(c.id) ? "生成中…" : "✦ Follow-up"}
+                            </button>
+                          )}
+                          <button onClick={() => handleDelete(c.id)} title="Delete"
+                            style={{ background: "none", border: "1px solid transparent", borderRadius: "4px", cursor: "pointer", color: "var(--text-dim)", fontSize: "11px", padding: "2px 6px", marginLeft: "auto", transition: "all 0.15s", flexShrink: 0 }}
+                            onMouseEnter={(e) => { const el = e.currentTarget as HTMLElement; el.style.color = "#e05555"; el.style.borderColor = "#e05555"; el.style.background = "rgba(224,85,85,0.1)"; }}
+                            onMouseLeave={(e) => { const el = e.currentTarget as HTMLElement; el.style.color = "var(--text-dim)"; el.style.borderColor = "transparent"; el.style.background = "none"; }}
+                          >✕</button>
+                        </div>
                       </td>
                     </tr>
 
@@ -590,16 +769,36 @@ export default function ContactsPanel() {
 
                             {/* Method */}
                             <div>
-                              <label style={{ fontSize: "11px", color: "var(--text-secondary)", display: "block", marginBottom: "5px", fontWeight: 600 }}>CONTACT METHOD</label>
-                              <select
-                                value={editForm.method}
-                                onChange={(e) => setEditForm({ ...editForm, method: e.target.value as ContactLog["method"] })}
-                                style={{ ...inputStyle }}
-                              >
-                                {(Object.keys(METHOD_META) as ContactLog["method"][]).map((m) => (
-                                  <option key={m} value={m}>{METHOD_META[m].icon} {METHOD_META[m].label}</option>
-                                ))}
-                              </select>
+                              <label style={{ fontSize: "11px", color: "var(--text-secondary)", display: "block", marginBottom: "5px", fontWeight: 600 }}>CONTACT METHOD <span style={{ fontWeight: 400, opacity: 0.6 }}>(select all that apply)</span></label>
+                              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                                {(Object.keys(METHOD_META) as ContactLog["method"][]).map((m) => {
+                                  const mm = METHOD_META[m];
+                                  const active = editForm.methods.includes(m);
+                                  return (
+                                    <button
+                                      key={m}
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const next = active
+                                          ? editForm.methods.filter((x) => x !== m)
+                                          : [...editForm.methods, m];
+                                        if (next.length > 0) setEditForm({ ...editForm, methods: next });
+                                      }}
+                                      style={{
+                                        fontSize: "12px", padding: "5px 10px", borderRadius: "6px", cursor: "pointer",
+                                        border: `1px solid ${active ? mm.color : "var(--border)"}`,
+                                        background: active ? `${mm.color}22` : "transparent",
+                                        color: active ? mm.color : "var(--text-secondary)",
+                                        fontWeight: active ? 600 : 400,
+                                        transition: "all 0.15s",
+                                      }}
+                                    >
+                                      {mm.icon} {mm.label}
+                                    </button>
+                                  );
+                                })}
+                              </div>
                             </div>
 
                             {/* Follow-up date */}
@@ -662,17 +861,41 @@ export default function ContactsPanel() {
                             )}
                           </div>
 
-                          {/* Generated emails linked to this contact */}
+                          {/* Generated emails linked to this contact — legacy records + new pipeline drafts */}
                           {(() => {
-                            const linkedEmails = getEmailsForBuilding(c.buildingId);
-                            if (linkedEmails.length === 0) return null;
+                            const legacyEmails = getEmailsForBuilding(c.buildingId);
+                            const pipelineEmails = getEmailDrafts().filter(
+                              (d) => d.contactId === c.buildingId && d.status === "sent"
+                            );
+                            const totalCount = legacyEmails.length + pipelineEmails.length;
+                            if (totalCount === 0) return null;
                             const PREVIEW_COUNT = 3;
                             const showAll = expandedEmailId === c.id;
-                            const visible = showAll ? linkedEmails : linkedEmails.slice(0, PREVIEW_COUNT);
+
+                            // Merge and sort by date descending
+                            type DisplayEmail = { id: string; subject: string; date: string; meta: string; preview: string };
+                            const allEmails: DisplayEmail[] = [
+                              ...pipelineEmails.map((d) => ({
+                                id: `draft-${d.id}`,
+                                subject: d.subject,
+                                date: d.sentAt ?? d.id,
+                                meta: `Email Agent · ${d.recipientEmail}`,
+                                preview: d.bodyText.slice(0, 200) + (d.bodyText.length > 200 ? "…" : ""),
+                              })),
+                              ...legacyEmails.map((e) => ({
+                                id: `legacy-${e.id}`,
+                                subject: e.subject,
+                                date: e.createdAt,
+                                meta: `${e.emailType} · ${e.language === "zh" ? "中文" : "English"}${e.pipelineStage ? ` · ${e.pipelineStage}` : ""}`,
+                                preview: e.body.slice(0, 200) + (e.body.length > 200 ? "…" : ""),
+                              })),
+                            ].sort((a, b) => b.date.localeCompare(a.date));
+
+                            const visible = showAll ? allEmails : allEmails.slice(0, PREVIEW_COUNT);
                             return (
                               <div style={{ marginTop: "16px" }}>
                                 <div style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-secondary)", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                                  Generated Emails ({linkedEmails.length})
+                                  Generated Emails ({totalCount})
                                 </div>
                                 {visible.map((email) => (
                                   <div key={email.id} style={{ padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--bg-card)", marginBottom: "6px" }}>
@@ -681,24 +904,23 @@ export default function ContactsPanel() {
                                         {email.subject}
                                       </div>
                                       <div style={{ fontSize: "11px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
-                                        {new Date(email.createdAt).toLocaleDateString()}
+                                        {new Date(email.date).toLocaleDateString()}
                                       </div>
                                     </div>
                                     <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "2px" }}>
-                                      {email.emailType} · {email.language === "zh" ? "中文" : "English"}
-                                      {email.pipelineStage && ` · ${email.pipelineStage}`}
+                                      {email.meta}
                                     </div>
                                     <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "4px", whiteSpace: "pre-wrap", lineHeight: 1.4, maxHeight: "60px", overflow: "hidden" }}>
-                                      {email.body.slice(0, 200)}{email.body.length > 200 ? "…" : ""}
+                                      {email.preview}
                                     </div>
                                   </div>
                                 ))}
-                                {linkedEmails.length > PREVIEW_COUNT && (
+                                {totalCount > PREVIEW_COUNT && (
                                   <button
                                     onClick={(e) => { e.stopPropagation(); setExpandedEmailId(showAll ? null : c.id); }}
                                     style={{ fontSize: "12px", color: "var(--text-secondary)", background: "none", border: "none", cursor: "pointer", padding: "4px 0", textDecoration: "underline", fontFamily: "var(--font-ui)" }}
                                   >
-                                    {showAll ? "Show less ▲" : `Show all ${linkedEmails.length} emails ▼`}
+                                    {showAll ? "Show less ▲" : `Show all ${totalCount} emails ▼`}
                                   </button>
                                 )}
                               </div>

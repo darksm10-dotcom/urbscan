@@ -62,6 +62,11 @@ export function deleteContact(id: string): void {
   notify();
 }
 
+export function markFollowUpsDone(ids: Set<string>): void {
+  save(load().map((c) => (ids.has(c.id) ? { ...c, followUpDone: true } : c)));
+  notify();
+}
+
 export function getOverdueFollowUps(): ContactLog[] {
   const today = new Date().toISOString().slice(0, 10);
   return load().filter((c) => !c.followUpDone && c.followUpAt && c.followUpAt <= today);

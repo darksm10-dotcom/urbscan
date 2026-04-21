@@ -11,6 +11,16 @@ import WhatsAppComposer from "@/components/WhatsAppComposer";
 
 const BuildingMap = dynamic(() => import("./BuildingMap"), { ssr: false });
 
+export interface ComposeEmailPayload {
+  buildingId: string;
+  buildingName: string;
+  buildingAddress?: string;
+  website?: string;
+  recipientEmail: string;
+  ccEmails?: string[];
+  companyDescription?: string;
+}
+
 interface ResultsListProps {
   buildings: Building[];
   loading: boolean;
@@ -19,6 +29,7 @@ interface ResultsListProps {
   lastParams: SearchParams | null;
   selectedId: string | null;
   onSelectId: (id: string | null) => void;
+  onComposeEmail?: (payload: ComposeEmailPayload) => void;
 }
 
 type SortMode = "score" | "distance" | "type" | "route";
@@ -104,7 +115,7 @@ function PipelineStatusDot({ status }: { status: LeadStatus }) {
   );
 }
 
-function ContactCard({ c }: { c: HunterContact }) {
+function ContactCard({ c, onCompose }: { c: HunterContact; onCompose?: () => void }) {
   const name = [c.firstName, c.lastName].filter(Boolean).join(" ") || null;
   const seniority: Record<string, string> = { senior: "高级", junior: "初级", executive: "高管", director: "总监", manager: "经理" };
   return (
@@ -127,6 +138,9 @@ function ContactCard({ c }: { c: HunterContact }) {
       <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
         <a href={`mailto:${c.email}`} style={{ fontSize: "15px", color: "var(--amber)", textDecoration: "none" }}>{c.email}</a>
         <button onClick={() => navigator.clipboard.writeText(c.email)} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: "2px", padding: "1px 6px", color: "var(--text-dim)", fontSize: "15px", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}>复制</button>
+        {onCompose && (
+          <button onClick={onCompose} style={{ background: "rgba(29,185,84,0.1)", border: "1px solid var(--amber)", borderRadius: "2px", padding: "1px 8px", color: "var(--amber)", fontSize: "13px", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.04em" }}>✉ Email</button>
+        )}
         {c.phone && <a href={`tel:${c.phone}`} style={{ fontSize: "13px", color: "var(--text-secondary)", textDecoration: "none" }}>{c.phone}</a>}
         {c.linkedin && <a href={c.linkedin} target="_blank" rel="noopener noreferrer" style={{ fontSize: "13px", color: "var(--text-dim)", textDecoration: "none" }}>in LinkedIn</a>}
       </div>
@@ -279,7 +293,7 @@ function PipelineStats({ buildings, pipeline }: { buildings: Building[]; pipelin
   );
 }
 
-export default function ResultsList({ buildings, loading, error, searched, lastParams, selectedId, onSelectId }: ResultsListProps) {
+export default function ResultsList({ buildings, loading, error, searched, lastParams, selectedId, onSelectId, onComposeEmail }: ResultsListProps) {
   const [sortMode, setSortMode] = useState<SortMode>("distance");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [pipeline, setPipeline] = useState<Record<string, PipelineEntry>>(() => getPipelineData());
@@ -434,6 +448,44 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
       setScrapeData((prev) => ({ ...prev, [b.id]: { loading: false, emails } }));
     } catch (err) {
       setScrapeData((prev) => ({ ...prev, [b.id]: { loading: false, error: err instanceof Error ? err.message : "抓取失败" } }));
+    }
+  }
+
+  async function handleScrapeAndCompose(b: Building) {
+    if (!onComposeEmail) return;
+    // If emails already scraped, use first one directly; rest go to CC
+    const existing = scrapeData[b.id]?.emails;
+    if (existing && existing.length > 0) {
+      onComposeEmail({ buildingId: b.id, buildingName: b.name, buildingAddress: b.address, website: b.website ?? undefined, recipientEmail: existing[0], ccEmails: existing.slice(1), companyDescription: enrichData[b.id]?.data?.description });
+      return;
+    }
+    // If Hunter contacts available, use first one; rest go to CC
+    const hunterContacts = hunterData[b.id]?.contacts;
+    if (hunterContacts && hunterContacts.length > 0) {
+      const c = hunterContacts[0];
+      const cc = hunterContacts.slice(1).map((x) => x.email);
+      onComposeEmail({ buildingId: b.id, buildingName: b.name, buildingAddress: b.address, website: b.website ?? undefined, recipientEmail: c.email, ccEmails: cc.length > 0 ? cc : undefined, companyDescription: enrichData[b.id]?.data?.description });
+      return;
+    }
+    // No website — open compose with no email (user fills in manually)
+    if (!b.website) {
+      onComposeEmail({ buildingId: b.id, buildingName: b.name, buildingAddress: b.address, website: b.website ?? undefined, recipientEmail: "" });
+      return;
+    }
+    // Scrape first, then compose with first result
+    setScrapeData((prev) => ({ ...prev, [b.id]: { loading: true } }));
+    try {
+      const emails = await fetchScrapedEmails(b.website);
+      setScrapeData((prev) => ({ ...prev, [b.id]: { loading: false, emails } }));
+      if (emails.length > 0) {
+        onComposeEmail({ buildingId: b.id, buildingName: b.name, buildingAddress: b.address, website: b.website ?? undefined, recipientEmail: emails[0], ccEmails: emails.slice(1).length > 0 ? emails.slice(1) : undefined, companyDescription: enrichData[b.id]?.data?.description });
+      } else {
+        // No email found — open compose anyway so user can enter manually
+        onComposeEmail({ buildingId: b.id, buildingName: b.name, buildingAddress: b.address, website: b.website ?? undefined, recipientEmail: "" });
+      }
+    } catch (err) {
+      setScrapeData((prev) => ({ ...prev, [b.id]: { loading: false, error: err instanceof Error ? err.message : "抓取失败" } }));
+      onComposeEmail({ buildingId: b.id, buildingName: b.name, buildingAddress: b.address, website: b.website ?? undefined, recipientEmail: "" });
     }
   }
 
@@ -801,6 +853,11 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
                     {b.type === "office" && <span title="写字楼" style={{ fontSize: "14px", flexShrink: 0 }}>🏢</span>}
                     {b.type === "residential" && <span title="住宅" style={{ fontSize: "14px", flexShrink: 0 }}>🏠</span>}
                     <span style={{ fontSize: "13px", color: "var(--text-primary)", fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, flex: 1 }}>{b.name}</span>
+                    {(contactLogs[b.id]?.length ?? 0) > 0 && (
+                      <span title={`已有 ${contactLogs[b.id].length} 条联系记录`} style={{ fontSize: "9px", padding: "1px 5px", borderRadius: "3px", background: "rgba(29,185,84,0.15)", color: "#1DB954", flexShrink: 0, fontWeight: 700, whiteSpace: "nowrap" }}>
+                        ✓ 已联系
+                      </span>
+                    )}
                   </div>
                   <div style={{ fontSize: "13px", color: "var(--text-dim)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{b.address}</div>
                 </div>
@@ -987,6 +1044,15 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
                     {b.website && !enrichData[b.id] && (
                       <button onClick={() => handleEnrichLookup(b)} style={{ fontSize: "13px", background: "rgba(0,212,168,0.08)", border: "1px solid rgba(0,212,168,0.4)", borderRadius: "2px", padding: "2px 10px", color: "var(--cyan)", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.06em" }}>◈ 公司增强</button>
                     )}
+                    {onComposeEmail && (
+                      <button
+                        onClick={() => handleScrapeAndCompose(b)}
+                        disabled={scrapeData[b.id]?.loading}
+                        style={{ fontSize: "13px", background: "rgba(29,185,84,0.12)", border: "1px solid var(--amber)", borderRadius: "2px", padding: "2px 10px", color: scrapeData[b.id]?.loading ? "var(--text-dim)" : "var(--amber)", cursor: scrapeData[b.id]?.loading ? "not-allowed" : "pointer", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.06em", fontWeight: 600 }}
+                      >
+                        {scrapeData[b.id]?.loading ? "◌ 抓取中..." : "✉ Email Agent"}
+                      </button>
+                    )}
                   </div>
 
                   {/* Pipeline status */}
@@ -1020,7 +1086,19 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
                       {hunterData[b.id].loading && <div style={{ fontSize: "15px", color: "var(--text-dim)", display: "flex", alignItems: "center", gap: "6px" }}><span style={{ animation: "spinnerRotate 1s linear infinite", display: "inline-block" }}>◌</span>正在查找...</div>}
                       {hunterData[b.id].error && <div style={{ fontSize: "15px", color: "#b85050" }}>✕ {hunterData[b.id].error}</div>}
                       {hunterData[b.id].contacts?.length === 0 && <div style={{ fontSize: "15px", color: "var(--text-dim)" }}>该域名暂无公开联系人</div>}
-                      {hunterData[b.id].contacts?.map((c) => <ContactCard key={c.email} c={c} />)}
+                      {hunterData[b.id].contacts?.map((c) => (
+                        <ContactCard
+                          key={c.email}
+                          c={c}
+                          onCompose={onComposeEmail ? () => onComposeEmail({
+                            buildingId: b.id,
+                            buildingName: b.name,
+                            buildingAddress: b.address,
+                            recipientEmail: c.email,
+                            companyDescription: enrichData[b.id]?.data?.description,
+                          }) : undefined}
+                        />
+                      ))}
                     </div>
                   )}
 
@@ -1035,6 +1113,18 @@ export default function ResultsList({ buildings, loading, error, searched, lastP
                         <div key={email} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
                           <a href={`mailto:${email}`} style={{ fontSize: "15px", color: "#64b4ff", textDecoration: "none" }}>{email}</a>
                           <button onClick={() => navigator.clipboard.writeText(email)} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: "2px", padding: "1px 6px", color: "var(--text-dim)", fontSize: "15px", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}>复制</button>
+                          {onComposeEmail && (
+                            <button
+                              onClick={() => onComposeEmail({
+                                buildingId: b.id,
+                                buildingName: b.name,
+                                buildingAddress: b.address,
+                                recipientEmail: email,
+                                companyDescription: enrichData[b.id]?.data?.description,
+                              })}
+                              style={{ background: "rgba(29,185,84,0.1)", border: "1px solid var(--amber)", borderRadius: "2px", padding: "1px 8px", color: "var(--amber)", fontSize: "13px", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.04em" }}
+                            >✉ Email</button>
+                          )}
                         </div>
                       ))}
                     </div>

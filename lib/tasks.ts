@@ -52,3 +52,8 @@ export function deleteTask(id: string): void {
   save(load().filter((t) => t.id !== id));
   notify();
 }
+
+export function renameTask(id: string, title: string): void {
+  save(load().map((t) => (t.id === id ? { ...t, title } : t)));
+  notify();
+}

@@ -11,7 +11,7 @@ import {
   onEmailDraftsChanged,
 } from "@/lib/email-drafts";
 import { getEmailPrompt, saveEmailPrompt, DEFAULT_PROMPT } from "@/lib/email-settings";
-import { getPipelineData } from "@/lib/pipeline";
+import { getPipelineData, setLeadStatus } from "@/lib/pipeline";
 import { STATUS_META } from "@/lib/constants";
 import { EmailDraft } from "@/types";
 import type { ComposeEmailPayload } from "./ResultsList";
@@ -143,6 +143,7 @@ export default function EmailPanel({ initialCompose, onComposeClear, onGoToConta
           recipientName: editName,
           note: selected.bodyText || undefined,
           rolePrompt: rolePrompt || undefined,
+          websiteSummary: selected.websiteSummary || undefined,
         }),
       });
       if (!res.ok) {
@@ -219,8 +220,8 @@ export default function EmailPanel({ initialCompose, onComposeClear, onGoToConta
           bodyHtml: data.bodyHtml,
           status: "draft",
         });
-      } catch {
-        // leave as queued — user can retry individually
+      } catch (err) {
+        console.error(`[batch-generate] failed for draft ${draft.id}:`, err);
       } finally {
         setGeneratingIds((prev) => { const s = new Set(prev); s.delete(draft.id); return s; });
         setBatchProgress((prev) => prev ? { done: prev.done + 1, total: prev.total } : null);
@@ -274,6 +275,10 @@ export default function EmailPanel({ initialCompose, onComposeClear, onGoToConta
 
       updateEmailDraft(selected.id, { subject: editSubject, bodyText: editBody, bodyHtml, recipientEmail: editEmail, recipientName: editName, ccEmails: editCc.length > 0 ? editCc : undefined });
       markEmailSent(selected.id);
+
+      // Auto-advance pipeline from "new" → "contacted"
+      const currentStatus = getPipelineData()[selected.contactId]?.status ?? "new";
+      if (currentStatus === "new") setLeadStatus(selected.contactId, "contacted");
 
       // Auto-record contact log and schedule follow-up on the same entry
       const followUpDate = new Date();

@@ -16,6 +16,7 @@ interface Note {
   title: string;
   content: string;
   tags: string;
+  companyTag?: string;
   files: NoteFile[];
   createdAt: string;
   updatedAt: string;
@@ -39,7 +40,7 @@ function saveNotes(notes: Note[]) {
 
 function newNote(): Note {
   const now = new Date().toISOString();
-  return { id: `note_${Date.now()}`, title: "", content: "", tags: "", files: [], createdAt: now, updatedAt: now };
+  return { id: `note_${Date.now()}`, title: "", content: "", tags: "", companyTag: "", files: [], createdAt: now, updatedAt: now };
 }
 
 function formatDate(iso: string) {
@@ -250,9 +251,10 @@ export default function NotesPanel() {
                 <div style={{ fontSize: "11px", color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {n.content ? n.content.slice(0, 55) : <span style={{ fontStyle: "italic" }}>Empty</span>}
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px", flexWrap: "wrap" }}>
                   <span style={{ fontSize: "10px", color: "var(--text-dim)" }}>{new Date(n.updatedAt).toLocaleDateString("en-MY", { day: "numeric", month: "short" })}</span>
                   {n.files?.length > 0 && <span style={{ fontSize: "10px", color: "var(--text-dim)" }}>📎 {n.files.length}</span>}
+                  {n.companyTag && <span style={{ fontSize: "10px", color: "var(--cyan)", background: "rgba(0,212,168,0.1)", padding: "0px 5px", borderRadius: "3px", maxWidth: "100px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>🏢 {n.companyTag}</span>}
                 </div>
               </div>
             );
@@ -318,13 +320,22 @@ export default function NotesPanel() {
                 style={{ ...base, fontSize: "24px", fontWeight: 700, letterSpacing: "-0.01em", marginBottom: "8px", display: "block" }}
               />
 
-              {/* Tags */}
-              <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "20px" }}>
-                <span style={{ fontSize: "11px", color: "var(--text-dim)", flexShrink: 0 }}>Tags</span>
-                <input value={active.tags} onChange={(e) => updateNote({ tags: e.target.value })}
-                  placeholder="follow-up, strategy, ideas..."
-                  style={{ ...base, fontSize: "12px", color: "var(--text-secondary)", borderBottom: "1px solid var(--border)", padding: "2px 4px" }}
-                />
+              {/* Tags + Company */}
+              <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "20px", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  <span style={{ fontSize: "11px", color: "var(--text-dim)", flexShrink: 0 }}>Tags</span>
+                  <input value={active.tags} onChange={(e) => updateNote({ tags: e.target.value })}
+                    placeholder="follow-up, strategy..."
+                    style={{ ...base, fontSize: "12px", color: "var(--text-secondary)", borderBottom: "1px solid var(--border)", padding: "2px 4px", width: "160px" }}
+                  />
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  <span style={{ fontSize: "11px", color: "var(--cyan)", flexShrink: 0 }}>🏢 公司</span>
+                  <input value={active.companyTag ?? ""} onChange={(e) => updateNote({ companyTag: e.target.value })}
+                    placeholder="关联公司名称..."
+                    style={{ ...base, fontSize: "12px", color: "var(--cyan)", borderBottom: "1px solid rgba(0,212,168,0.3)", padding: "2px 4px", width: "180px" }}
+                  />
+                </div>
               </div>
 
               {/* Content */}

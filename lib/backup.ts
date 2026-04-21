@@ -10,6 +10,7 @@ const BACKUP_KEYS = [
   "urbscan_sender_name",
   "urbscan_sender_company",
   "urbscan_theme",
+  "urbscan_email_drafts",
 ];
 
 export function exportBackup(): void {
@@ -38,6 +39,9 @@ export function importBackup(file: File): Promise<number> {
     reader.onload = (e) => {
       try {
         const data = JSON.parse(e.target?.result as string) as Record<string, unknown>;
+        if (typeof data !== "object" || data === null || !("version" in data)) {
+          throw new Error("不是有效的 Urbscan 备份文件");
+        }
         let count = 0;
         for (const key of BACKUP_KEYS) {
           if (key in data) {
@@ -46,8 +50,8 @@ export function importBackup(file: File): Promise<number> {
           }
         }
         resolve(count);
-      } catch {
-        reject(new Error("备份文件格式无效"));
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error("备份文件格式无效"));
       }
     };
     reader.onerror = () => reject(new Error("文件读取失败"));

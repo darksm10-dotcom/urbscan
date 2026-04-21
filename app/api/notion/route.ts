@@ -1,19 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 
 const NOTION_VERSION = "2022-06-28";
 
-interface ContactPayload {
-  buildingId: string;
-  buildingName: string;
-  buildingAddress?: string;
-  buildingPhone?: string;
-  method: string;
-  note: string;
-  contactedAt: string;
-  followUpAt?: string;
-  followUpDone: boolean;
-  pipelineStatus: string;
-}
+const ContactPayloadSchema = z.object({
+  buildingId: z.string(),
+  buildingName: z.string().min(1),
+  buildingAddress: z.string().optional(),
+  buildingPhone: z.string().optional(),
+  method: z.string(),
+  note: z.string(),
+  contactedAt: z.string(),
+  followUpAt: z.string().optional(),
+  followUpDone: z.boolean(),
+  pipelineStatus: z.string(),
+});
+
+type ContactPayload = z.infer<typeof ContactPayloadSchema>;
 
 function notionHeaders(token: string) {
   return {
@@ -147,11 +150,15 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const contacts = (await req.json()) as ContactPayload[];
-
-  if (!Array.isArray(contacts) || contacts.length === 0) {
+  const body = await req.json();
+  if (!Array.isArray(body) || body.length === 0) {
     return NextResponse.json({ error: "No contacts provided" }, { status: 400 });
   }
+  const parsed = z.array(ContactPayloadSchema).safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+  }
+  const contacts: ContactPayload[] = parsed.data;
 
   const existing = await queryExisting(token, databaseId);
   let created = 0;

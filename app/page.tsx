@@ -10,14 +10,16 @@ import { searchNearbyBuildingsIncremental } from "@/lib/places";
 import { pushHistory } from "@/lib/history";
 import { getOverdueFollowUps, onContactsChanged } from "@/lib/contacts";
 import { getTasks, onTasksChanged } from "@/lib/tasks";
+import { generateFollowUpDraft } from "@/lib/follow-up-email";
+import type { ContactLog } from "@/types";
 
 const SearchPanel   = dynamic(() => import("@/components/SearchPanel"),   { ssr: false });
 const ResultsList   = dynamic(() => import("@/components/ResultsList"),   { ssr: false });
 const ContactsPanel = dynamic(() => import("@/components/ContactsPanel"), { ssr: false });
 const NotesPanel    = dynamic(() => import("@/components/NotesPanel"),    { ssr: false });
 const TodayPanel    = dynamic(() => import("@/components/TodayPanel"),    { ssr: false });
-const EmailGenerator = dynamic(() => import("@/components/EmailGenerator"), { ssr: false });
-
+const EmailPanel    = dynamic(() => import("@/components/EmailPanel"),    { ssr: false });
+import type { ComposeEmailPayload } from "@/components/ResultsList";
 type AppTab = "today" | "scan" | "contacts" | "notes" | "email";
 
 export default function Home() {
@@ -29,6 +31,7 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<AppTab>("today");
   const [overdueCount, setOverdueCount] = useState(0);
+  const [pendingCompose, setPendingCompose] = useState<ComposeEmailPayload | null>(null);
   const [todayCount, setTodayCount] = useState(0);
   const [searchProgress, setSearchProgress] = useState<{ done: number; total: number } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -59,6 +62,20 @@ export default function Home() {
     const unsubTasks = onTasksChanged(update);
     const unsubContacts = onContactsChanged(update);
     return () => { unsubTasks(); unsubContacts(); };
+  }, []);
+
+  const handleComposeEmail = useCallback((payload: ComposeEmailPayload) => {
+    setPendingCompose(payload);
+    setActiveTab("email");
+  }, []);
+
+  const handleFollowUpEmail = useCallback(async (c: ContactLog) => {
+    try {
+      await generateFollowUpDraft(c);
+      setActiveTab("email");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Follow-up generation failed");
+    }
   }, []);
 
   const handleSearch = useCallback(async (params: SearchParams) => {
@@ -204,15 +221,36 @@ export default function Home() {
           ))}
         </div>
 
-        {/* Right — empty, reserved for future controls */}
-        <div style={{ width: "80px" }} />
+        {/* Right — backup/restore */}
+        <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+          <button
+            onClick={exportBackup}
+            title="备份数据"
+            style={{ fontSize: "11px", padding: "4px 10px", borderRadius: "4px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-dim)", cursor: "pointer" }}
+          >↓ 备份</button>
+          <label title="恢复数据" style={{ fontSize: "11px", padding: "4px 10px", borderRadius: "4px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-dim)", cursor: "pointer" }}>
+            ↑ 恢复
+            <input type="file" accept=".json" style={{ display: "none" }} onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              try {
+                const count = await importBackup(file);
+                alert(`已恢复 ${count} 项数据，页面将刷新`);
+                window.location.reload();
+              } catch (err) {
+                alert(err instanceof Error ? err.message : "恢复失败");
+              }
+              e.target.value = "";
+            }} />
+          </label>
+        </div>
       </header>
 
       {/* ── Main layout ────────────────────────────────── */}
       <main style={{ flex: 1, display: "flex", minHeight: 0 }}>
         {activeTab === "today" ? (
           <section style={{ flex: 1, display: "flex", minHeight: 0, overflow: "auto" }}>
-            <TodayPanel onGoToContacts={() => setActiveTab("contacts")} />
+            <TodayPanel onGoToContacts={() => setActiveTab("contacts")} onFollowUpEmail={handleFollowUpEmail} />
           </section>
         ) : activeTab === "scan" ? (
           <>
@@ -244,6 +282,7 @@ export default function Home() {
                 lastParams={lastParams}
                 selectedId={selectedId}
                 onSelectId={setSelectedId}
+                onComposeEmail={handleComposeEmail}
               />
             </section>
           </>
@@ -263,17 +302,17 @@ export default function Home() {
                 Manage your outreach pipeline and follow-ups
               </div>
             </div>
-            <ContactsPanel />
+            <ContactsPanel onGoToEmail={() => setActiveTab("email")} />
           </section>
         ) : activeTab === "notes" ? (
           <section style={{ flex: 1, display: "flex", minHeight: 0, overflow: "hidden" }}>
             <NotesPanel />
           </section>
-        ) : (
-          <section style={{ flex: 1, overflowY: "auto", minWidth: 0 }}>
-            <EmailGenerator />
+        ) : activeTab === "email" ? (
+          <section style={{ flex: 1, display: "flex", minHeight: 0, overflow: "hidden" }}>
+            <EmailPanel initialCompose={pendingCompose} onComposeClear={() => setPendingCompose(null)} onGoToContacts={() => setActiveTab("contacts")} />
           </section>
-        )}
+        ) : null}
       </main>
 
       {/* ── Footer ─────────────────────────────────────── */}
@@ -295,32 +334,8 @@ export default function Home() {
         </span>
       </footer>
 
-      {/* Backup row */}
-      <div style={{ display: "flex", gap: "8px", alignItems: "center", padding: "6px 16px", borderTop: "1px solid var(--border)", background: "var(--bg-card)", flexShrink: 0 }}>
-        <button
-          onClick={exportBackup}
-          style={{ fontSize: "11px", padding: "3px 10px", borderRadius: "4px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-dim)", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}
-        >
-          ↓ 备份
-        </button>
-        <label style={{ fontSize: "11px", padding: "3px 10px", borderRadius: "4px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-dim)", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}>
-          ↑ 恢复
-          <input type="file" accept=".json" style={{ display: "none" }} onChange={async (e) => {
-            const file = e.target.files?.[0];
-            if (!file) return;
-            try {
-              const count = await importBackup(file);
-              alert(`已恢复 ${count} 项数据，页面将刷新`);
-              window.location.reload();
-            } catch (err) {
-              alert(err instanceof Error ? err.message : "恢复失败");
-            }
-            e.target.value = "";
-          }} />
-        </label>
-      </div>
 
-      <style>{`
+<style>{`
         @media (max-width: 768px) {
           main { flex-direction: column !important; }
           .sidebar { width: 100% !important; border-right: none !important; border-bottom: 1px solid var(--border); }
